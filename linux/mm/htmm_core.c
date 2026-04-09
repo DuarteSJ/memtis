@@ -20,11 +20,21 @@
 #include "internal.h"
 #include <asm/pgtable.h>
 
-static unsigned long aol_weight_cached = 1000;
-
 #define AOL_PARAM_A 6 // TODO: Tune this using the microbenchmark SOAR/ALTO proposes.
 #define AOL_PARAM_B 750 // TODO: Tune this using the microbenchmark SOAR/ALTO proposes.
 #define AOL_SCALE 1000
+
+static unsigned long aol_weight_cached = 1000;
+
+unsigned long get_current_aol_weight(void)
+{
+    return READ_ONCE(aol_weight_cached);
+}
+
+static void set_current_aol_weight(unsigned long weight)
+{
+    WRITE_ONCE(aol_weight_cached, weight);
+}
 
 void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
 {
@@ -36,7 +46,7 @@ void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
     u64 aol, k, k_den, p, pk;
 
     if (c == 0 || a3 == 0 || (AOL_PARAM_A == 0 && AOL_PARAM_B == 0)) {
-        aol_weight_cached = AOL_SCALE;
+        set_current_aol_weight(AOL_SCALE);
         return;
     }
 
@@ -56,12 +66,7 @@ void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
     pk = mul_u64_u64_div_u64(p, k, AOL_SCALE);
 
     /* Final weight = 1 + S */
-    aol_weight_cached = AOL_SCALE + pk;
-}
-
-unsigned long get_current_aol_weight(void)
-{
-    return READ_ONCE(aol_weight_cached);
+    set_current_aol_weight(pk + AOL_SCALE);
 }
 
 void htmm_mm_init(struct mm_struct *mm)
