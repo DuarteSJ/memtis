@@ -17,6 +17,7 @@
 #define STLB_MISS_LOADS	    0x11d0
 
 /* pmu counters */
+#define N_HTMMCOUNTERS 4 /* A1, A3, s_LLC, c */
 #define CYCLE_ACTIVITY_STALLS_L3_MISS   0x060014 /* Number of LLC stall cycles */
 #define CPU_CLK_UNHALTED_THREAD         0x003c   /* Number of cycles */
 #define ORO_CYCLES_WITH_DEMAND_DATA_RD  0x4301b1 /* Cycles with pending requests */
