@@ -15,6 +15,8 @@
 
 struct task_struct *access_sampling = NULL;
 struct perf_event ***mem_event;
+static struct perf_event *aol_events[4]; /* A1, A3, s_LLC, c*/
+static u64 aols_last_a1, aols_last_a3, aols_last_s_llc, aols_last_c;
 
 static bool valid_va(unsigned long addr)
 {
@@ -93,6 +95,61 @@ static int __perf_event_open(__u64 config, __u64 config1, __u64 cpu,
     return 0;
 }
 
+static int aol_counters_init(void)
+{
+    struct perf_event_attr attr;
+    u64 configs[4] = {
+        ORO_CYCLES_WITH_DEMAND_DATA_RD,  /* A1 */
+        OFFCORE_REQUESTS_DEMAND_DATA_RD, /* A3 */
+        CYCLE_ACTIVITY_STALLS_L3_MISS,   /* s_LLC */
+        CPU_CLK_UNHALTED_THREAD,         /* c*/
+    };
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        memset(&attr, 0, sizeof(attr));
+        attr.type           = PERF_TYPE_RAW;
+        attr.size           = sizeof(attr);
+        attr.config         = configs[i];
+        attr.exclude_kernel = 0; /* TODO: Including kernel events. Probably good, but maybe shouldn't */
+        attr.disabled       = 0;
+
+        aol_events[i] = perf_event_create_kernel_counter(&attr, 0, NULL, NULL, NULL);
+        if (IS_ERR(aol_events[i])) {
+            printk("aol_counters_init: failed to create counter %d\n", i);
+            aol_events[i] = NULL;
+        }
+    }
+    return 0;
+}
+
+#define READ_AOL_EVENT(ev, dst) do {                                   \
+    u64 _en, _ru;                                                      \
+    (dst) = perf_event_read_value((ev), &_en, &_ru);                   \
+    if (!_en || !_ru) return;                                          \
+} while (0)
+
+static void aol_read_and_update(void)
+{
+    u64 a1 = 0, a3 = 0, s_llc = 0, c = 0;
+
+    if (!aol_events[0] || !aol_events[1] || !aol_events[2] || !aol_events[3])
+        return;
+
+    READ_AOL_EVENT(aol_events[0], a1);
+    READ_AOL_EVENT(aol_events[1], a3);
+    READ_AOL_EVENT(aol_events[2], s_llc);
+    READ_AOL_EVENT(aol_events[3], c);
+
+    update_aol_counters(a1 - aols_last_a1, a3 - aols_last_a3,
+                        s_llc - aols_last_s_llc, c - aols_last_c);
+    aols_last_a1    = a1;
+    aols_last_a3    = a3;
+    aols_last_s_llc = s_llc;
+    aols_last_c     = c;
+}
+#undef READ_AOL_EVENT
+
 static int pebs_init(pid_t pid, int node)
 {
     int cpu, event;
@@ -117,6 +174,7 @@ static int pebs_init(pid_t pid, int node)
 	}
     }
 
+    aol_counters_init(); /* TODO: Maybe this should be elsewhere */
     return 0;
 }
 
@@ -191,6 +249,8 @@ static int ksamplingd(void *data)
     unsigned long cpucap_period = msecs_to_jiffies(15000); // 15s
     unsigned long sample_period = 0;
     unsigned long sample_inst_period = 0;
+    unsigned long aol_period = msecs_to_jiffies(1000); /* TODO: this has to be tunned. Currently 1s as per SOAR/ALTO paper */
+    unsigned long last_aol_update = jiffies;
     /* report cpu/period stat */
     unsigned long trace_cputime, trace_period = msecs_to_jiffies(1500); // 3s
     unsigned long trace_runtime;
@@ -277,7 +337,7 @@ static int ksamplingd(void *data)
 				break;
 			    }
 
-			    update_pginfo(he->pid, he->addr, event);
+			    update_pginfo(he->pid, he->addr, event, get_current_aol_weight());
 			    //count_vm_event(HTMM_NR_SAMPLED);
 			    nr_sampled++;
 
@@ -325,6 +385,10 @@ static int ksamplingd(void *data)
 
 	/* check elasped time */
 	cur = jiffies;
+    if ((cur - last_aol_update) >= aol_period) {
+        aol_read_and_update();
+        last_aol_update = cur;
+    }
 	if ((cur - elapsed_cputime) >= cpucap_period) {
 	    u64 cur_runtime = t->se.sum_exec_runtime;
 	    exec_runtime = cur_runtime - exec_runtime; //ns

@@ -16,6 +16,13 @@
 #define STLB_MISS_STORES    0x12d0
 #define STLB_MISS_LOADS	    0x11d0
 
+/* pmu counters */
+#define CYCLE_ACTIVITY_STALLS_L3_MISS   0x060014 /* Number of LLC stall cycles */
+#define CPU_CLK_UNHALTED_THREAD         0x003c   /* Number of cycles */
+#define ORO_CYCLES_WITH_DEMAND_DATA_RD  0x4301b1 /* Cycles with pending requests */
+#define ORO_DEMAND_DATA_RD              0x4101b1 /* Number of pending requests per cycle */
+#define OFFCORE_REQUESTS_DEMAND_DATA_RD 0x0160b0 /* Number of requests to uncore */
+
 /* tmm option */
 #define HTMM_NO_MIG	    0x0	/* unused */
 #define	HTMM_BASELINE	    0x1 /* unused */
@@ -91,6 +98,9 @@ enum events {
 };
 
 /* htmm_core.c */
+extern unsigned long get_current_aol_weight(void);
+extern void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c);
+
 extern void htmm_mm_init(struct mm_struct *mm);
 extern void htmm_mm_exit(struct mm_struct *mm);
 extern void __prep_transhuge_page_for_htmm(struct mm_struct *mm, struct page *page);
@@ -107,7 +117,7 @@ extern int set_page_coolstatus(struct page *page, pte_t *pte, struct mm_struct *
 
 extern void set_lru_adjusting(struct mem_cgroup *memcg, bool inc_thres);
 
-extern void update_pginfo(pid_t pid, unsigned long address, enum events e);
+extern void update_pginfo(pid_t pid, unsigned long address, enum events e, unsigned long aol_weight);
 
 extern bool deferred_split_huge_page_for_htmm(struct page *page);
 extern unsigned long deferred_split_scan_for_htmm(struct mem_cgroup_per_node *pn,

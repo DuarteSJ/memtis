@@ -20,6 +20,50 @@
 #include "internal.h"
 #include <asm/pgtable.h>
 
+static unsigned long aol_weight_cached = 1000;
+
+#define AOL_PARAM_A 6 // TODO: Tune this using the microbenchmark SOAR/ALTO proposes.
+#define AOL_PARAM_B 750 // TODO: Tune this using the microbenchmark SOAR/ALTO proposes.
+#define AOL_SCALE 1000
+
+void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
+{
+    /* S * SCALE = (P * SCALE * K * SCALE) / SCALE*/
+    /* P * SCALE = s_LLC * SCALE / c */
+    /* K * SCALE = 1 / (a * SCALE + (b * SCALE * SCALE) / (AOL * SCALE)) (scaled) */
+    /* AOL * SCALE = A1 * SCALE / A3 */
+
+    u64 aol, k, k_den, p, pk;
+
+    if (c == 0 || a3 == 0 || (AOL_PARAM_A == 0 && AOL_PARAM_B == 0)) {
+        aol_weight_cached = AOL_SCALE;
+        return;
+    }
+
+    /* P = s_LLC / c (scaled) */
+    p = mul_u64_u64_div_u64(s_llc, AOL_SCALE, c);
+
+    /* AOL = A1 / A3 (scaled) */
+    aol = mul_u64_u64_div_u64(a1, AOL_SCALE, a3);
+    if (aol == 0) aol = 1;
+
+    /* K = 1 / (a + b/AOL) (scaled) */
+    k_den = AOL_PARAM_A * AOL_SCALE + mul_u64_u64_div_u64(AOL_PARAM_B, AOL_SCALE * AOL_SCALE, aol);
+
+    k = mul_u64_u64_div_u64(AOL_SCALE, AOL_SCALE, k_den);
+
+    /* S = P * K (scaled) */
+    pk = mul_u64_u64_div_u64(p, k, AOL_SCALE);
+
+    /* Final weight = 1 + S */
+    aol_weight_cached = AOL_SCALE + pk;
+}
+
+unsigned long get_current_aol_weight(void)
+{
+    return READ_ONCE(aol_weight_cached);
+}
+
 void htmm_mm_init(struct mm_struct *mm)
 {
     struct mem_cgroup *memcg = get_mem_cgroup_from_mm(mm);
@@ -851,7 +895,7 @@ lru_unlock:
 }
 
 static void update_base_page(struct vm_area_struct *vma,
-	struct page *page, pginfo_t *pginfo)
+	struct page *page, pginfo_t *pginfo, unsigned long aol_weight)
 {
     struct mem_cgroup *memcg = get_mem_cgroup_from_mm(vma->vm_mm);
     unsigned long prev_accessed, prev_idx, cur_idx;
@@ -862,7 +906,7 @@ static void update_base_page(struct vm_area_struct *vma,
 
     prev_accessed = pginfo->total_accesses;
     pginfo->nr_accesses++;
-    pginfo->total_accesses += HPAGE_PMD_NR;
+    pginfo->total_accesses += (HPAGE_PMD_NR * aol_weight) / AOL_SCALE; // TODO: This needs to be looked into further. Shouls we change the average distribuition of pages?
     
     prev_idx = get_idx(prev_accessed);
     cur_idx = get_idx(pginfo->total_accesses);
@@ -902,7 +946,7 @@ static void update_base_page(struct vm_area_struct *vma,
 }
 
 static void update_huge_page(struct vm_area_struct *vma, pmd_t *pmd,
-	struct page *page, unsigned long address)
+	struct page *page, unsigned long address, unsigned long aol_weight)
 {
     struct mem_cgroup *memcg = get_mem_cgroup_from_mm(vma->vm_mm);
     struct page *meta_page;
@@ -919,9 +963,9 @@ static void update_huge_page(struct vm_area_struct *vma, pmd_t *pmd,
 
     pginfo_prev = pginfo->total_accesses;
     pginfo->nr_accesses++;
-    pginfo->total_accesses += HPAGE_PMD_NR;
+    pginfo->total_accesses += (HPAGE_PMD_NR * aol_weight) / AOL_SCALE;
     
-    meta_page->total_accesses++;
+    meta_page->total_accesses += aol_weight / AOL_SCALE;
 
 #ifndef DEFERRED_SPLIT_ISOLATED
     if (check_split_huge_page(memcg, meta_page, false)) {
@@ -979,7 +1023,7 @@ static void update_huge_page(struct vm_area_struct *vma, pmd_t *pmd,
 }
 
 static int __update_pte_pginfo(struct vm_area_struct *vma, pmd_t *pmd,
-				unsigned long address)
+				unsigned long address, unsigned long aol_weight)
 {
     pte_t *pte, ptent;
     spinlock_t *ptl;
@@ -1007,7 +1051,7 @@ static int __update_pte_pginfo(struct vm_area_struct *vma, pmd_t *pmd,
     if (!pginfo)
 	goto pte_unlock;
 
-    update_base_page(vma, page, pginfo);
+    update_base_page(vma, page, pginfo, aol_weight);
     pte_unmap_unlock(pte, ptl);
     if (htmm_cxl_mode) {
 	if (page_to_nid(page) == 0)
@@ -1028,7 +1072,7 @@ pte_unlock:
 }
 
 static int __update_pmd_pginfo(struct vm_area_struct *vma, pud_t *pud,
-				unsigned long address)
+				unsigned long address, unsigned long aol_weight)
 {
     pmd_t *pmd, pmdval;
     bool ret = 0;
@@ -1060,7 +1104,7 @@ static int __update_pmd_pginfo(struct vm_area_struct *vma, pud_t *pud,
 	    goto pmd_unlock;
 	}
 
-	update_huge_page(vma, pmd, page, address);
+	update_huge_page(vma, pmd, page, address, aol_weight);
 	if (htmm_cxl_mode) {
 	    if (page_to_nid(page) == 0)
 		return 1;
@@ -1078,10 +1122,10 @@ pmd_unlock:
     }
 
     /* base page */
-    return __update_pte_pginfo(vma, pmd, address);
+    return __update_pte_pginfo(vma, pmd, address, aol_weight);
 }
 
-static int __update_pginfo(struct vm_area_struct *vma, unsigned long address)
+static int __update_pginfo(struct vm_area_struct *vma, unsigned long address, unsigned long aol_weight)
 {
     pgd_t *pgd;
     p4d_t *p4d;
@@ -1099,7 +1143,7 @@ static int __update_pginfo(struct vm_area_struct *vma, unsigned long address)
     if (pud_none_or_clear_bad(pud))
 	return 0;
     
-    return __update_pmd_pginfo(vma, pud, address);
+    return __update_pmd_pginfo(vma, pud, address, aol_weight);
 }
 
 static void set_memcg_split_thres(struct mem_cgroup *memcg)
@@ -1329,7 +1373,7 @@ static bool need_memcg_cooling (struct mem_cgroup *memcg)
     return false;
 }
 
-void update_pginfo(pid_t pid, unsigned long address, enum events e)
+void update_pginfo(pid_t pid, unsigned long address, enum events e, unsigned long aol_weight)
 {
     struct pid *pid_struct = find_get_pid(pid);
     struct task_struct *p = pid_struct ? pid_task(pid_struct, PIDTYPE_PID) : NULL;
@@ -1363,7 +1407,7 @@ void update_pginfo(pid_t pid, unsigned long address, enum events e)
 	goto mmap_unlock;
     
     /* increase sample counts only for valid records */
-    ret = __update_pginfo(vma, address);
+    ret = __update_pginfo(vma, address, aol_weight);
     if (ret == 1) { /* memory accesses to DRAM */
 	memcg->nr_sampled++;
 	memcg->nr_sampled_for_split++;
