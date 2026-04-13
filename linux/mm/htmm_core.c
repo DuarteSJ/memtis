@@ -58,7 +58,7 @@ void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
     if (aol == 0) aol = 1;
 
     /* K = 1 / (a + b/AOL) (scaled) */
-    k_den = AOL_PARAM_A * AOL_SCALE + mul_u64_u64_div_u64(AOL_PARAM_B, AOL_SCALE * AOL_SCALE, aol);
+    k_den = AOL_PARAM_A * AOL_SCALE + mul_u64_u64_div_u64(AOL_PARAM_B, (u64)AOL_SCALE * AOL_SCALE, aol);
 
     k = mul_u64_u64_div_u64(AOL_SCALE, AOL_SCALE, k_den);
 

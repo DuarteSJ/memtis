@@ -158,7 +158,7 @@ static void aol_read_and_update(void)
             c += perf_event_read_value(aol_events[cpu][3], &_en, &_ru);
     }
 
-    // TODO: Maybe just error out if any of the counters fail to read. For now just using the last value.
+    // TODO: Maybe just error out if any of the counters fail to read.
 
     update_aol_counters(a1 - aols_last_a1, a3 - aols_last_a3, s_llc - aols_last_s_llc, c - aols_last_c);
     aols_last_a1    = a1;
@@ -275,6 +275,7 @@ static int ksamplingd(void *data)
 
     /* for analytic purpose */
     unsigned long hr_dram = 0, hr_nvm = 0;
+    unsigned long aol_weight = get_current_aol_weight(); // TODO: It would be "more accurate" to read the current aol weight at each sample, but that may cause unnecessary overhead since aol weight is updated every second.
 
     /* orig impl: see read_sum_exec_runtime() */
     trace_runtime = total_runtime = exec_runtime = t->se.sum_exec_runtime;
@@ -353,7 +354,7 @@ static int ksamplingd(void *data)
 				break;
 			    }
 
-			    update_pginfo(he->pid, he->addr, event, get_current_aol_weight());
+			    update_pginfo(he->pid, he->addr, event, aol_weight);
 			    //count_vm_event(HTMM_NR_SAMPLED);
 			    nr_sampled++;
 
