@@ -95,37 +95,6 @@ static int __perf_event_open(__u64 config, __u64 config1, __u64 cpu,
     return 0;
 }
 
-static void aol_counters_init(void)
-{
-    struct perf_event_attr attr;
-    u64 configs[N_HTMMCOUNTERS] = {
-        ORO_CYCLES_WITH_DEMAND_DATA_RD,  /* A1 */
-        OFFCORE_REQUESTS_DEMAND_DATA_RD, /* A3 */
-        CYCLE_ACTIVITY_STALLS_L3_MISS,   /* s_LLC */
-        CPU_CLK_UNHALTED_THREAD,         /* c */
-    };
-    int cpu, counter;
-
-    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
-        for (counter = 0; counter < N_HTMMCOUNTERS; counter++) {
-            memset(&attr, 0, sizeof(struct perf_event_attr));
-            attr.type           = PERF_TYPE_RAW;
-            attr.size           = sizeof(attr);
-            attr.config         = configs[counter];
-            attr.exclude_kernel = 0;
-            attr.disabled       = 0;
-
-            aol_events[cpu][counter] = perf_event_create_kernel_counter(&attr, cpu, NULL, NULL, NULL);
-            if (IS_ERR(aol_events[cpu][counter])) {
-                // TODO: Maybe error out if any of the counters fail to initializw.
-                printk("aol_counters_init: failed to create counter %d on cpu %d\n", counter, cpu);
-
-                aol_events[cpu][counter] = NULL;
-            }
-        }
-    }
-}
-
 static void aol_counters_release(void)
 {
     int cpu, counter;
@@ -140,25 +109,62 @@ static void aol_counters_release(void)
     }
 }
 
+static int aol_counters_init(void)
+{
+    struct perf_event_attr attr;
+    u64 configs[N_HTMMCOUNTERS] = {
+        ORO_CYCLES_WITH_DEMAND_DATA_RD,  /* A1 */
+        OFFCORE_REQUESTS_DEMAND_DATA_RD, /* A3 */
+        CYCLE_ACTIVITY_STALLS_L3_MISS,   /* s_LLC */
+        CPU_CLK_UNHALTED_THREAD,         /* c */
+    };
+    int cpu, counter;
+
+    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
+        for (counter = 0; counter < N_HTMMCOUNTERS; counter++) {
+            struct perf_event *ev;
+
+            memset(&attr, 0, sizeof(struct perf_event_attr));
+            attr.type           = PERF_TYPE_RAW;
+            attr.size           = sizeof(attr);
+            attr.config         = configs[counter];
+            attr.exclude_kernel = 0;
+            attr.disabled       = 0;
+
+            ev = perf_event_create_kernel_counter(&attr, cpu, NULL, NULL, NULL);
+            if (IS_ERR(ev)) {
+                int err = PTR_ERR(ev);
+                pr_err("aol_counters_init: failed to create counter %d on cpu %d: %d\n",
+                       counter, cpu, err);
+                aol_events[cpu][counter] = NULL;
+                aol_counters_release();
+                return err;
+            }
+            aol_events[cpu][counter] = ev;
+        }
+    }
+    return 0;
+}
+
 static void aol_read_and_update(void)
 {
     u64 a1 = 0, a3 = 0, s_llc = 0, c = 0;
-    u64 _en, _ru;
-    int cpu;
+    u64 *sums[N_HTMMCOUNTERS] = { &a1, &a3, &s_llc, &c };
+    u64 en, ru;
+    int cpu, i;
 
     for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
-        // TODO: use _en and _ru to scale the counter values based on time enabled and time running. For now just using the raw counter values.
-        if (aol_events[cpu][0])
-            a1 += perf_event_read_value(aol_events[cpu][0], &_en, &_ru);
-        if (aol_events[cpu][1])
-            a3 += perf_event_read_value(aol_events[cpu][1], &_en, &_ru);
-        if (aol_events[cpu][2])
-            s_llc += perf_event_read_value(aol_events[cpu][2], &_en, &_ru);
-        if (aol_events[cpu][3])
-            c += perf_event_read_value(aol_events[cpu][3], &_en, &_ru);
+        for (i = 0; i < N_HTMMCOUNTERS; i++) {
+            u64 val = perf_event_read_value(aol_events[cpu][i], &en, &ru);
+            /* counter was enabled but never actually ran in this window: result is untrustworthy */
+            if (en && !ru) {
+                printk_ratelimited("aol_read_and_update: counter %d on cpu %d not running (en=%llu ru=%llu); skipping update\n",
+                                   i, cpu, en, ru);
+                return;
+            }
+            *sums[i] += val;
+        }
     }
-
-    // TODO: Maybe just error out if any of the counters fail to read.
 
     update_aol_counters(a1 - aols_last_a1, a3 - aols_last_a3, s_llc - aols_last_s_llc, c - aols_last_c);
     aols_last_a1    = a1;
@@ -498,7 +504,12 @@ int ksamplingd_init(pid_t pid, int node)
 	return 0;
     }
 
-    aol_counters_init();
+    ret = aol_counters_init();
+    if (ret) {
+	pr_err("aol_counters_init failure... ERROR:%d\n", ret);
+	pebs_disable();
+	return ret;
+    }
 
     return ksamplingd_run();
 }
