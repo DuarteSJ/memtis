@@ -949,12 +949,12 @@ static bool cooling_page_one(struct page *page, struct vm_area_struct *vma,
 		unsigned int diff = memcg_cclock - pginfo->cooling_clock;
 		int j;
 		
-		prev_accessed = pginfo->total_accesses;
+		prev_accessed = pginfo->weighted_accesses;
 		pginfo->nr_accesses = 0;
 		for (j = 0; j < diff; j++)
-		    pginfo->total_accesses >>= 1;
+		    pginfo->weighted_accesses >>= 1;
 
-		cur_idx = get_idx(pginfo->total_accesses);
+		cur_idx = get_idx(pginfo->weighted_accesses);
 		hca->memcg->hotness_hg[cur_idx]++;
 		hca->memcg->ebp_hotness_hg[cur_idx]++;
 
@@ -1034,7 +1034,7 @@ static bool page_check_hotness_one(struct page *page, struct vm_area_struct *vma
 	    if (!pginfo)
 		continue;
 	    
-	    cur_idx = pginfo->total_accesses;
+	    cur_idx = pginfo->weighted_accesses;
 	    cur_idx = get_idx(cur_idx);
 	    if (cur_idx >= hca->memcg->active_threshold)
 		hca->page_is_hot = 2;
@@ -1098,7 +1098,7 @@ static bool get_pginfo_idx_one(struct page *page, struct vm_area_struct *vma,
 	    if (!pginfo)
 		continue;
 	    
-	    cur_idx = pginfo->total_accesses;
+	    cur_idx = pginfo->weighted_accesses;
 	    cur_idx = get_idx(cur_idx);
 	    hca->page_is_hot = cur_idx;
 	} else if (pvmw.pmd) {

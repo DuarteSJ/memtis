@@ -94,17 +94,17 @@ void __prep_transhuge_page_for_htmm(struct mm_struct *mm, struct page *page)
     int i, idx, offset;
     struct mem_cgroup *memcg = mm ? get_mem_cgroup_from_mm(mm) : NULL;
     pginfo_t pginfo = { 0, 0, 0, false, };
-    int hotness_factor = memcg ? get_accesses_from_idx(memcg->active_threshold + 1) : 0;
+    /* seed new pages one bin above active_threshold so they're considered
+     * for promotion without waiting to accumulate real samples */
+    unsigned int hotness_factor = memcg ? get_accesses_from_idx(memcg->active_threshold + 1) : 0;
     /* third tail page */
     page[3].hot_utils = 0;
-    page[3].total_accesses = hotness_factor;
+    page[3].weighted_accesses = (unsigned long)hotness_factor << AOL_SHIFT;
     page[3].skewness_idx = 0;
     page[3].idx = 0;
     SetPageHtmm(&page[3]);
 
-    if (hotness_factor < 0)
-	hotness_factor = 0;
-    pginfo.total_accesses = hotness_factor;
+    pginfo.weighted_accesses = (unsigned long)hotness_factor << AOL_SHIFT;
     pginfo.nr_accesses = hotness_factor;
     /* fourth~ tail pages */
     for (i = 0; i < HPAGE_PMD_NR; i++) {
@@ -159,7 +159,7 @@ void copy_transhuge_pginfo(struct page *page,
 	return;
 
     newpage[3].hot_utils = page[3].hot_utils;
-    newpage[3].total_accesses = page[3].total_accesses;
+    newpage[3].weighted_accesses = page[3].weighted_accesses;
     newpage[3].skewness_idx = page[3].skewness_idx;
     newpage[3].cooling_clock = page[3].cooling_clock;
     newpage[3].idx = page[3].idx;
@@ -172,8 +172,8 @@ void copy_transhuge_pginfo(struct page *page,
 
 	newpage[idx].compound_pginfo[offset].nr_accesses =
 			page[idx].compound_pginfo[offset].nr_accesses;
-	newpage[idx].compound_pginfo[offset].total_accesses =
-			page[idx].compound_pginfo[offset].total_accesses;
+	newpage[idx].compound_pginfo[offset].weighted_accesses =
+			page[idx].compound_pginfo[offset].weighted_accesses;
 	
 	page[idx].compound_pginfo[offset] = zero_pginfo;
 	page[idx].mapping = TAIL_MAPPING;
@@ -223,14 +223,14 @@ void check_transhuge_cooling(void *arg, struct page *page, bool locked)
 		idx = 4 + i / 4;
 		offset = i % 4;
 		pginfo =&(page[idx].compound_pginfo[offset]);
-		prev_idx = get_idx(pginfo->total_accesses);
+		prev_idx = get_idx(pginfo->weighted_accesses);
 		if (prev_idx >= bp_hot_thres) {
 		    meta_page->hot_utils++;
-		    refs += pginfo->total_accesses;
+		    refs += pginfo->weighted_accesses;
 		}
 
 		/* get the sum of the square of H_ij*/
-		skewness += (pginfo->total_accesses * pginfo->total_accesses);
+		skewness += (pginfo->weighted_accesses * pginfo->weighted_accesses);
 		if (prev_idx >= (memcg->bp_active_threshold))
 		    pginfo->may_hot = true;
 		else
@@ -238,18 +238,18 @@ void check_transhuge_cooling(void *arg, struct page *page, bool locked)
 
 		/* halves access counts of subpages */
 		for (j = 0; j < diff; j++)
-		    pginfo->total_accesses >>= 1;
+		    pginfo->weighted_accesses >>= 1;
 
 		/* updates estimated base page histogram */
-		cur_idx = get_idx(pginfo->total_accesses);
+		cur_idx = get_idx(pginfo->weighted_accesses);
 		memcg->ebp_hotness_hg[cur_idx]++;
 	    }
 
 	    /* halves access count for a huge page */
 	    for (i = 0; i < diff; i++)		
-		meta_page->total_accesses >>= 1;
+		meta_page->weighted_accesses >>= 1;
 
-	    cur_idx = meta_page->total_accesses;
+	    cur_idx = meta_page->weighted_accesses;
 	    cur_idx = get_idx(cur_idx);
 	    memcg->hotness_hg[cur_idx] += HPAGE_PMD_NR;
 	    meta_page->idx = cur_idx;
@@ -263,6 +263,8 @@ void check_transhuge_cooling(void *arg, struct page *page, bool locked)
 		skewness /= 11; /* scale down */
 		skewness = skewness / (meta_page->hot_utils);
 		skewness = skewness / (meta_page->hot_utils);
+		/* input was weighted_accesses^2, so descale by 2*AOL_SHIFT */
+		skewness >>= 2 * AOL_SHIFT;
 		skewness = get_skew_idx(skewness);
 	    }
 	    meta_page->skewness_idx = skewness;
@@ -296,7 +298,7 @@ void check_base_cooling(pginfo_t *pginfo, struct page *page, bool locked)
 	unsigned int diff = memcg_cclock - pginfo->cooling_clock;    
 	int j;
 	    
-	prev_accessed = pginfo->total_accesses;
+	prev_accessed = pginfo->weighted_accesses;
 	cur_idx = get_idx(prev_accessed);
 	if (cur_idx >= (memcg->bp_active_threshold))
 	    pginfo->may_hot = true;
@@ -305,11 +307,11 @@ void check_base_cooling(pginfo_t *pginfo, struct page *page, bool locked)
 
 	/* halves access count */
 	for (j = 0; j < diff; j++)
-	    pginfo->total_accesses >>= 1;
-	//if (pginfo->total_accesses == 0)
-	  //  pginfo->total_accesses = 1;
+	    pginfo->weighted_accesses >>= 1;
+	//if (pginfo->weighted_accesses == 0)
+	  //  pginfo->weighted_accesses = 1;
 
-	cur_idx = get_idx(pginfo->total_accesses);
+	cur_idx = get_idx(pginfo->weighted_accesses);
 	memcg->hotness_hg[cur_idx]++;
 	memcg->ebp_hotness_hg[cur_idx]++;
 
@@ -324,7 +326,7 @@ int set_page_coolstatus(struct page *page, pte_t *pte, struct mm_struct *mm)
     struct mem_cgroup *memcg = get_mem_cgroup_from_mm(mm);
     struct page *pte_page;
     pginfo_t *pginfo;
-    int hotness_factor;
+    unsigned int hotness_factor;
 
     if (!memcg || !memcg->htmm_enabled)
 	return 0;
@@ -336,10 +338,10 @@ int set_page_coolstatus(struct page *page, pte_t *pte, struct mm_struct *mm)
     pginfo = get_pginfo_from_pte(pte);
     if (!pginfo)
 	return 0;
-    
+
     hotness_factor = get_accesses_from_idx(memcg->active_threshold + 1);
-    
-    pginfo->total_accesses = hotness_factor;
+
+    pginfo->weighted_accesses = (unsigned long)hotness_factor << AOL_SHIFT;
     pginfo->nr_accesses = hotness_factor;
     if (htmm_skip_cooling)
 	pginfo->cooling_clock = READ_ONCE(memcg->cooling_clock) + 1;
@@ -572,10 +574,13 @@ struct page *get_meta_page(struct page *page)
     return &page[3];
 }
 
+/* weighted_accesses is in AOL_SHIFT fixed-point: one real access contributes
+ * AOL_SCALE units, a weighted access contributes aol_weight units. get_idx
+ * descales internally; callers writing into weighted_accesses must upscale. */
 unsigned int get_accesses_from_idx(unsigned int idx)
 {
     unsigned int accesses = 1;
-    
+
     if (idx == 0)
 	return 0;
 
@@ -589,15 +594,16 @@ unsigned int get_accesses_from_idx(unsigned int idx)
 unsigned int get_idx(unsigned long num)
 {
     unsigned int cnt = 0;
-   
+
+    num >>= AOL_SHIFT;   /* descale: weighted_accesses -> access count */
     num++;
     while (1) {
 	num = num >> 1;
 	if (num)
 	    cnt++;
-	else	
+	else
 	    return cnt;
-	
+
 	if (cnt == 15)
 	    break;
     }
@@ -658,7 +664,7 @@ void uncharge_htmm_pte(pte_t *pte, struct mem_cgroup *memcg)
     if (!pginfo)
 	return;
 
-    idx = get_idx(pginfo->total_accesses);
+    idx = get_idx(pginfo->weighted_accesses);
     spin_lock(&memcg->access_lock);
     if (memcg->hotness_hg[idx] > 0)
 	memcg->hotness_hg[idx]--;
@@ -694,7 +700,7 @@ void uncharge_htmm_page(struct page *page, struct mem_cgroup *memcg)
 	    pginfo_t *pginfo;
 
 	    pginfo = &(page[base_idx].compound_pginfo[offset]);
-	    idx = get_idx(pginfo->total_accesses);
+	    idx = get_idx(pginfo->weighted_accesses);
 	    if (memcg->ebp_hotness_hg[idx] > 0)
 		memcg->ebp_hotness_hg[idx]--;
 	}
@@ -898,6 +904,15 @@ lru_unlock:
 	BUG();
 }
 
+/* saturating add for the u32 pginfo_t.weighted_accesses field. Hot pages
+ * that pin at U32_MAX stay in the top bin, which is the same place they'd
+ * end up in any case (if this isn't done, a wraparound may happen for 
+ * pages that get accessed a lot). */
+static inline void sat_add_u32(uint32_t *acc, u64 delta)
+{
+    *acc = min_t(u64, (u64)*acc + delta, U32_MAX);
+}
+
 static void update_base_page(struct vm_area_struct *vma,
 	struct page *page, pginfo_t *pginfo, unsigned long aol_weight)
 {
@@ -908,12 +923,12 @@ static void update_base_page(struct vm_area_struct *vma,
     /* check cooling status and perform cooling if the page needs to be cooled */
     check_base_cooling(pginfo, page, false);
 
-    prev_accessed = pginfo->total_accesses;
+    prev_accessed = pginfo->weighted_accesses;
     pginfo->nr_accesses++;
-    pginfo->total_accesses += (HPAGE_PMD_NR * aol_weight) / AOL_SCALE; // TODO: This needs to be looked into further. Shouls we change the average distribuition of pages?
+    sat_add_u32(&pginfo->weighted_accesses, (u64)HPAGE_PMD_NR * aol_weight);
     
     prev_idx = get_idx(prev_accessed);
-    cur_idx = get_idx(pginfo->total_accesses);
+    cur_idx = get_idx(pginfo->weighted_accesses);
 
     spin_lock(&memcg->access_lock);
 
@@ -965,11 +980,12 @@ static void update_huge_page(struct vm_area_struct *vma, pmd_t *pmd,
     /* check cooling status */
     check_transhuge_cooling((void *)memcg, page, false);
 
-    pginfo_prev = pginfo->total_accesses;
+    pginfo_prev = pginfo->weighted_accesses;
     pginfo->nr_accesses++;
-    pginfo->total_accesses += (HPAGE_PMD_NR * aol_weight) / AOL_SCALE;
-    
-    meta_page->total_accesses += aol_weight / AOL_SCALE;
+    sat_add_u32(&pginfo->weighted_accesses, (u64)HPAGE_PMD_NR * aol_weight);
+
+    /* meta_page->weighted_accesses is u64, plenty of headroom */
+    meta_page->weighted_accesses += aol_weight;
 
 #ifndef DEFERRED_SPLIT_ISOLATED
     if (check_split_huge_page(memcg, meta_page, false)) {
@@ -979,7 +995,7 @@ static void update_huge_page(struct vm_area_struct *vma, pmd_t *pmd,
 
     /*subpage */
     prev_idx = get_idx(pginfo_prev);
-    cur_idx = get_idx(pginfo->total_accesses);
+    cur_idx = get_idx(pginfo->weighted_accesses);
     spin_lock(&memcg->access_lock);
     if (prev_idx != cur_idx) {
 	if (memcg->ebp_hotness_hg[prev_idx] > 0)
@@ -996,7 +1012,7 @@ static void update_huge_page(struct vm_area_struct *vma, pmd_t *pmd,
 
     /* hugepage */
     prev_idx = meta_page->idx;
-    cur_idx = meta_page->total_accesses;
+    cur_idx = meta_page->weighted_accesses;
     cur_idx = get_idx(cur_idx);
     if (prev_idx != cur_idx) {
 	spin_lock(&memcg->access_lock);
@@ -1470,7 +1486,7 @@ void update_pginfo(pid_t pid, unsigned long address, enum events e, unsigned lon
 		    set_memcg_split_thres(memcg);
 		}
 	    }
-	    printk("total_accesses: %lu max_dram_hits: %lu cur_hits: %lu \n",
+	    printk("weighted_accesses: %lu max_dram_hits: %lu cur_hits: %lu \n",
 		    memcg->nr_max_sampled, memcg->prev_max_dram_sampled, memcg->prev_dram_sampled);
 	    memcg->nr_max_sampled >>= 1;
 	}

@@ -2149,16 +2149,16 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 		}
 
 		pte_pginfo->nr_accesses = tail_pginfo->nr_accesses;
-		pte_pginfo->total_accesses = tail_pginfo->total_accesses;
+		pte_pginfo->weighted_accesses = tail_pginfo->weighted_accesses;
 		pte_pginfo->cooling_clock = tail_pginfo->cooling_clock;
 		
-		if (get_idx(pte_pginfo->total_accesses) >= (memcg->active_threshold - 1))
+		if (get_idx(pte_pginfo->weighted_accesses) >= (memcg->active_threshold - 1))
 		    SetPageActive(&page[i]);
 		else
 		    ClearPageActive(&page[i]);
 
 		spin_lock(&memcg->access_lock);
-		memcg->hotness_hg[get_idx(pte_pginfo->total_accesses)]++;
+		memcg->hotness_hg[get_idx(pte_pginfo->weighted_accesses)]++;
 		spin_unlock(&memcg->access_lock);
 		/* Htmm flag will be cleared later */
 		/* ClearPageHtmm(&page[i]); */
