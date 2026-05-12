@@ -24,6 +24,11 @@
 #define ORO_DEMAND_DATA_RD              0x4101b1 /* Number of pending requests per cycle */
 #define OFFCORE_REQUESTS_DEMAND_DATA_RD 0x0160b0 /* Number of requests to uncore */
 
+/* AOL-weighted hotness: fixed-point scale used for aol_weight and total_accesses.
+ * Power of two so the descale in get_idx/get_accesses_from_idx is a bit shift. */
+#define AOL_SHIFT 10
+#define AOL_SCALE (1UL << AOL_SHIFT)
+
 /* tmm option */
 #define HTMM_NO_MIG	    0x0	/* unused */
 #define	HTMM_BASELINE	    0x1 /* unused */

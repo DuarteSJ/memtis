@@ -22,9 +22,8 @@
 
 #define AOL_PARAM_A 6 // TODO: Tune this using the microbenchmark SOAR/ALTO proposes.
 #define AOL_PARAM_B 750 // TODO: Tune this using the microbenchmark SOAR/ALTO proposes.
-#define AOL_SCALE 1000
 
-static unsigned long aol_weight_cached = 1000;
+static unsigned long aol_weight_cached = AOL_SCALE;
 
 unsigned long get_current_aol_weight(void)
 {
