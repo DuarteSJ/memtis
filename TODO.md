@@ -1,4 +1,4 @@
-# AOL-weighted hotness — pending work
+asdfasdf# AOL-weighted hotness — pending work
 
 - [ ] **Verify scale-invariant sites are actually invariant.** Review-only
   pass — no code changes expected. The `get_idx` descale handles every
@@ -53,12 +53,44 @@ Add bins vs shift and keep bins
 
 
 
-Test plan:
+## Test plan (incremental)
 
-Benchmarks do soar:
-    verificar se o slowdown real e a metrica que tenho la estao fortemente correlacionados. comparar com a correlacao do soar para ver se ta fixe.
-    Em vez de ter a worload toda testar com partest (smaller window)
+- [ ] **Step 0 — verify PMU event encodings.** On target box:
+  `perf stat -e r060006a3,r01b0,r4301b1,r4101b1,r003c -a sleep 5` vs
+  symbolic names. Numbers must match. Confirm no OFFCORE_RSP `config1`
+  required for the ORO events on this uarch.
+- [ ] **Step 1 — counter sanity, userspace only.** Pointer-chase > LLC and
+  STREAM at varying thread counts. Compute weight by hand from `perf stat`
+  deltas. Expect `1.0` idle, `2–5×` saturated.
+- [ ] **Step 2 — kernel readback only.** `printk` `a1,a3,s_llc,c,aol,p,k,s,weight`
+  per period under dummy load. Must agree with Step 1. Check
+  `time_enabled vs time_running` — if `<1`, fix scaling before continuing.
+- [ ] **Step 3 — weighted path, weight pinned to `AOL_SCALE`.** Run a MEMTIS
+  workload; `hotness_hg`, promo/demo counts must be ~identical to baseline
+  `92487b973`. If not, bisect fixed-point sites (`get_idx`, seeds,
+  `sat_add_u32`, skewness descale).
+- [ ] **Step 4 — static non-unit weight (2×, 4×).** Distribution shifts
+  uniformly, thresholds re-converge after cooling cycles. Add a counter
+  for `sat_add_u32` saturations; if >1 % of pages pin `U32_MAX` at 4×,
+  drop `AOL_SHIFT` 10 → 6.
+- [ ] **Step 5 — dynamic weight, hardcoded `a=6, b=750`.** DRAM-only run.
+  Log `aol_weight` time series with workload phase markers; weight tracks
+  load.
+- [ ] **Step 6 — correlate with ground truth.** Partial-window runs
+  (partest-style). Measure real solo-vs-shared slowdown. Plot
+  `weight - 1` vs measured slowdown. Pearson > ~0.7 = model works;
+  otherwise refit `a, b`. Compare correlation strength against SOAR's
+  reported numbers.
+- [ ] **Step 7 — tiered run, full pipeline.** DRAM + NVM/CXL on real
+  workloads (GAP-bc, XSBench, …). A/B weight=1 vs weight=dynamic.
+  Metrics: promotion volume, hit ratio, runtime, P99 latency. Win =
+  lower runtime under contention, no regression at low load.
+- [ ] **Step 8 — soak.** 24 h under varying load. Watch saturation drift,
+  counter overflow, ksamplingd CPU use (`perf record` on the kthread).
 
-
-MEMTIS:
-    Ir mudando bocados. Comecar com hardcoded values (mudar o +1 para +5 ou +whatever) e ir mudando merdinhas devagar.
+### Quick wins before Step 2
+- [ ] Debugfs/sysfs file exposing live `aol_weight` + raw `a1,a3,s_llc,c`
+  deltas (saves a rebuild per tuning iteration).
+- [ ] Counter for `sat_add_u32` saturation events.
+- [ ] Force one `aol_read_and_update()` before the ksamplingd main loop
+  so the first ~1 s isn't biased by the `AOL_SCALE` seed.
