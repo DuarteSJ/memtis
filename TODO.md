@@ -43,3 +43,22 @@
   at thread start (`linux/mm/htmm_sampler.c`), so updates that happen
   during the loop take effect. Tradeoff: per-sample atomic read overhead
   vs. accuracy.
+
+
+
+
+Design shi:
+
+Add bins vs shift and keep bins
+
+
+
+Test plan:
+
+Benchmarks do soar:
+    verificar se o slowdown real e a metrica que tenho la estao fortemente correlacionados. comparar com a correlacao do soar para ver se ta fixe.
+    Em vez de ter a worload toda testar com partest (smaller window)
+
+
+MEMTIS:
+    Ir mudando bocados. Comecar com hardcoded values (mudar o +1 para +5 ou +whatever) e ir mudando merdinhas devagar.

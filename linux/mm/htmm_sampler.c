@@ -281,7 +281,7 @@ static int ksamplingd(void *data)
 
     /* for analytic purpose */
     unsigned long hr_dram = 0, hr_nvm = 0;
-    unsigned long aol_weight = get_current_aol_weight(); // TODO: It would be "more accurate" to read the current aol weight at each sample, but that may cause unnecessary overhead since aol weight is updated every second.
+    unsigned long aol_weight = get_current_aol_weight();
 
     /* orig impl: see read_sum_exec_runtime() */
     trace_runtime = total_runtime = exec_runtime = t->se.sum_exec_runtime;
@@ -410,6 +410,7 @@ static int ksamplingd(void *data)
 	cur = jiffies;
     if ((cur - last_aol_update) >= aol_period) {
         aol_read_and_update();
+        aol_weight = get_current_aol_weight();
         last_aol_update = cur;
     }
 	if ((cur - elapsed_cputime) >= cpucap_period) {
