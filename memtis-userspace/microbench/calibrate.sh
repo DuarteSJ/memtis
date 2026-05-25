@@ -27,12 +27,14 @@ OUT=${OUT:-calibrate.csv}
 
 EVENTS=r010001b1,r000001b0,r060006a3,r0000003c
 
+PIN=${PIN:-0}   # logical cpu to pin workload to (node 0 default)
+
 run_fast() {
     local logf=$(mktemp)
     local t0 t1
     t0=$(date +%s.%N)
-    sudo perf stat -x, -e "$EVENTS" -a -- \
-        numactl --membind=$FAST --cpunodebind=$FAST "$@" >/dev/null 2> "$logf"
+    sudo perf stat -x, -e "$EVENTS" -- \
+        numactl --membind=$FAST --physcpubind=$PIN "$@" >/dev/null 2> "$logf"
     t1=$(date +%s.%N)
     awk -F, -v wall="$(echo "$t1 - $t0" | bc -l)" '
         /r010001b1/{a1=$1}
@@ -47,7 +49,7 @@ run_fast() {
 run_slow() {
     local t0 t1
     t0=$(date +%s.%N)
-    numactl --membind=$SLOW --cpunodebind=$FAST "$@" >/dev/null 2>&1
+    numactl --membind=$SLOW --physcpubind=$PIN "$@" >/dev/null 2>&1
     t1=$(date +%s.%N)
     echo "$t1 - $t0" | bc -l
 }
@@ -71,28 +73,30 @@ run_workload() {
             K   = (P>0) ? S/P : 0
             printf "%s,%s,%s,%s,%s,%.4f,%.4f,%.4f,%.6f,%.6f,%.6f\n",
                 name, a1, a3, sllc, c, tf, ts, aol, P, S, K
+            printf "  diag: A1/c=%.3f (workload-scoped if ~1 for pchase, ~0.1 for stream)\n", a1*1.0/c > "/dev/stderr"
         }
     ' | tee -a "$OUT"
 }
 
-run_workload "pchase-1G"       ./pchase 1024 $DUR
-run_workload "stream-256-1t"   ./stream 256 1 $DUR
-run_workload "stream-256-4t"   ./stream 256 4 $DUR
-run_workload "stream-256-8t"   ./stream 256 8 $DUR
-run_workload "stream-1024-1t"  ./stream 1024 1 $DUR
+run_workload "pchase-2G"       ./pchase 2048 $DUR
+run_workload "stream-512-1t"   ./stream 512 1 $DUR
 
-# fit 1/K = a + b/AOL via OLS over rows where K is sane
+# fit 1/K = a + b/AOL via OLS. Drop K > 1 points (paper says K in (0,1];
+# K > 1 = slow-tier BW saturated, model breaks).
 echo
 echo "=== fit ==="
 awk -F, '
-    NR>1 && $11+0 > 0 && $8+0 > 0 {
+    NR>1 && $11+0 > 0 && $11+0 <= 1.0 && $8+0 > 0 {
         x = 1.0/$8
         y = 1.0/$11
         sx += x; sy += y; sxx += x*x; sxy += x*y; n++
         printf "  point: AOL=%.2f  K=%.4f  -> (1/AOL=%.5f, 1/K=%.3f)\n", $8, $11, x, y
     }
+    NR>1 && $11+0 > 1.0 {
+        printf "  DROP (K>1, BW-saturated): %s  AOL=%.2f K=%.4f\n", $1, $8, $11
+    }
     END {
-        if (n < 2) { print "need >=2 sane points"; exit }
+        if (n < 2) { print "need >=2 sane points; rerun with more workloads"; exit }
         denom = n*sxx - sx*sx
         b = (n*sxy - sx*sy) / denom
         a = (sy - b*sx) / n
