@@ -15,8 +15,8 @@
 #   FAST     fast NUMA node (default 0)
 #   SLOW     slow NUMA node (default 2)
 #   DUR      target seconds per run (default 15)
-#   BUF_A    pchase buffer MB (default 1024)
-#   BUF_B    sequential buffer MB (default 1024)
+#   BUF_A    pchase buffer MB (default 2048, matching SOAR/ALTO paper Sec 2.1)
+#   BUF_B    sequential buffer MB (default 2048, matching paper Sec 2.1)
 #   OUT      csv (default calibrate-soar.csv)
 set -euo pipefail
 
@@ -24,8 +24,8 @@ BENCH=${BENCH:-$HOME/SoarAlto/src/microbenchmark/src/bench}
 FAST=${FAST:-0}
 SLOW=${SLOW:-2}
 DUR=${DUR:-15}
-BUF_A=${BUF_A:-1024}
-BUF_B=${BUF_B:-1024}
+BUF_A=${BUF_A:-2048}
+BUF_B=${BUF_B:-2048}
 OUT=${OUT:-calibrate-soar.csv}
 
 EVENTS=r010001b1,r000001b0,r060006a3,r0000003c
