@@ -20,12 +20,13 @@
 #include "internal.h"
 #include <asm/pgtable.h>
 
-/* SOAR/ALTO K = 1/(a + b/AOL). Both a and b stored scaled by AOL_SCALE
- * so fractional values survive (e.g. a=0.5 -> 512, b=1.37 -> 1403).
- * Hardware-dependent — recalibrate via SoarAlto microbench
- * (memtis-userspace/microbench/calibrate-soar.sh). */
-#define AOL_PARAM_A_SCALED (AOL_SCALE / 2)         /* a = 0.5 */
-#define AOL_PARAM_B_SCALED (67 * AOL_SCALE)        /* b = 67 */
+/* SOAR/ALTO K = 1/(a + b/AOL). Both stored scaled by AOL_SCALE so
+ * fractional values survive. Hardware-dependent — recalibrate via
+ * memtis-userspace/microbench/calibrate-soar.sh on the target box.
+ * Values below were fit on nvram (Xeon Gold 5218, slow tier = NUMA node 2):
+ *   a = 0.0625, b = 1.2801 -> A_SCALED=64, B_SCALED=1311 */
+#define AOL_PARAM_A_SCALED 64
+#define AOL_PARAM_B_SCALED 1311
 
 static unsigned long aol_weight_cached = AOL_SCALE;
 
