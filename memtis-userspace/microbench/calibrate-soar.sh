@@ -14,7 +14,6 @@
 #   BENCH    path to SoarAlto bench binary (default ~/SoarAlto/src/microbenchmark/src/bench)
 #   FAST     fast NUMA node (default 0)
 #   SLOW     slow NUMA node (default 2)
-#   PIN      cpu to pin to (default 0; SoarAlto bench self-pins to cpu thread_idx=0)
 #   DUR      target seconds per run (default 15)
 #   BUF_A    pchase buffer MB (default 1024)
 #   BUF_B    sequential buffer MB (default 1024)
@@ -24,7 +23,6 @@ set -euo pipefail
 BENCH=${BENCH:-$HOME/SoarAlto/src/microbenchmark/src/bench}
 FAST=${FAST:-0}
 SLOW=${SLOW:-2}
-PIN=${PIN:-0}
 DUR=${DUR:-15}
 BUF_A=${BUF_A:-1024}
 BUF_B=${BUF_B:-1024}
@@ -47,7 +45,7 @@ walltime() {
 pilot_iter() {
     local r="$1" buf_a="$2" buf_b="$3"
     local t
-    t=$(walltime numactl --membind=$FAST --physcpubind=$PIN \
+    t=$(walltime numactl --membind=$FAST \
         "$BENCH" -R "$r" -i 1 -A "$buf_a" -B "$buf_b")
     awk -v t="$t" -v dur="$DUR" 'BEGIN {
         i = int(dur / t + 0.5)
@@ -62,7 +60,7 @@ run_fast_perf() {
     local t0 t1
     t0=$(date +%s.%N)
     sudo perf stat -x, -e "$EVENTS" -- \
-        numactl --membind=$FAST --physcpubind=$PIN \
+        numactl --membind=$FAST \
         "$BENCH" -R "$r" -i "$iter" -A "$buf_a" -B "$buf_b" >/dev/null 2> "$logf"
     t1=$(date +%s.%N)
     awk -F, -v wall="$(echo "$t1 - $t0" | bc -l)" '
@@ -77,7 +75,7 @@ run_fast_perf() {
 
 run_slow() {
     local r="$1" iter="$2" buf_a="$3" buf_b="$4"
-    walltime numactl --membind=$SLOW --physcpubind=$PIN \
+    walltime numactl --membind=$SLOW \
         "$BENCH" -R "$r" -i "$iter" -A "$buf_a" -B "$buf_b"
 }
 
@@ -108,21 +106,22 @@ run_workload() {
     ' | tee -a "$OUT"
 }
 
-run_workload "pchase"  0.0 "$BUF_A" "$BUF_B"
-run_workload "stream"  1.0 "$BUF_A" "$BUF_B"
+run_workload "pchase"   0.0 "$BUF_A" "$BUF_B"
+run_workload "mix"      0.5 "$BUF_A" "$BUF_B"
+run_workload "stream"   1.0 "$BUF_A" "$BUF_B"
 
 echo
 echo "=== fit ==="
+# Paper's empirical K in (0,1] assumes ~2x slow tier. On bigger gaps
+# K can exceed 1; the K = 1/(a + b/AOL) hyperbola still applies with
+# smaller a (asymptote 1/a). Accept all positive K.
 awk -F, '
-    NR>1 && $11+0 > 0 && $11+0 <= 1.0 && $8+0 > 0 {
+    NR>1 && $11+0 > 0 && $8+0 > 0 {
         x = 1.0/$8
         y = 1.0/$11
         sx += x; sy += y; sxx += x*x; sxy += x*y; n++
         printf "  point: %s  AOL=%.2f  K=%.4f  -> (1/AOL=%.5f, 1/K=%.3f)\n",
                $1, $8, $11, x, y
-    }
-    NR>1 && $11+0 > 1.0 {
-        printf "  DROP (K>1, BW-saturated): %s  AOL=%.2f K=%.4f\n", $1, $8, $11
     }
     END {
         if (n < 2) {
