@@ -1,4 +1,4 @@
-asdfasdf# AOL-weighted hotness — pending work
+# AOL-weighted hotness — pending work
 
 - [ ] **Verify scale-invariant sites are actually invariant.** Review-only
   pass — no code changes expected. The `get_idx` descale handles every
@@ -55,10 +55,19 @@ Add bins vs shift and keep bins
 
 ## Test plan (incremental)
 
-- [ ] **Step 0 — verify PMU event encodings.** On target box:
-  `perf stat -e r060006a3,r01b0,r4301b1,r4101b1,r003c -a sleep 5` vs
-  symbolic names. Numbers must match. Confirm no OFFCORE_RSP `config1`
-  required for the ORO events on this uarch.
+- [x] **Step 0 — verify PMU event encodings.** Done. Old encodings
+  (`r4301b1`, `r4101b1`, `r0160b0`, `r060014`) put cmask/USR/OS in the
+  wrong bits and even used the wrong event for `CYCLE_ACTIVITY.STALLS_L3_MISS`.
+  Old A1 and A3 were the same counter (ORO.DEMAND_DATA_RD without cmask),
+  AOL ≈ 1 always. Fixed encodings:
+  ```
+  sudo perf stat -e r010001b1,r000001b0,r060006a3,r0000003c -a sleep 5
+  ```
+  Mapping: `r010001b1` = ORO.CYCLES_WITH_DEMAND_DATA_RD (A1),
+  `r000001b0` = OFFCORE_REQUESTS.DEMAND_DATA_RD (A3),
+  `r060006a3` = CYCLE_ACTIVITY.STALLS_L3_MISS (s_LLC),
+  `r0000003c` = CPU_CLK_UNHALTED.THREAD (c). Sanity passes idle:
+  A1 ≤ c, A1 ≥ A3, AOL ≈ 52 cycles (paper range 0–130).
 - [ ] **Step 1 — counter sanity, userspace only.** Pointer-chase > LLC and
   STREAM at varying thread counts. Compute weight by hand from `perf stat`
   deltas. Expect `1.0` idle, `2–5×` saturated.

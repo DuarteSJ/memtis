@@ -20,8 +20,12 @@
 #include "internal.h"
 #include <asm/pgtable.h>
 
-#define AOL_PARAM_A 6 // TODO: Tune this using the microbenchmark SOAR/ALTO proposes.
-#define AOL_PARAM_B 750 // TODO: Tune this using the microbenchmark SOAR/ALTO proposes.
+/* SOAR/ALTO K = 1/(a + b/AOL). Paper-fit defaults: K~0.2 @ AOL=15 and
+ * K~0.8 @ AOL=90 solve to a≈0.5, b≈67. Hardware-dependent — recalibrate
+ * via the SOAR microbenchmark (sequential vs pointer-chasing).
+ * AOL_PARAM_A is fractional, so store it scaled by AOL_SCALE. */
+#define AOL_PARAM_A_SCALED (AOL_SCALE / 2) /* a = 0.5 */
+#define AOL_PARAM_B 67                     /* b */
 
 static unsigned long aol_weight_cached = AOL_SCALE;
 
@@ -37,34 +41,32 @@ static void set_current_aol_weight(unsigned long weight)
 
 void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
 {
-    /* S * SCALE = (P * SCALE * K * SCALE) / SCALE*/
-    /* P * SCALE = s_LLC * SCALE / c */
-    /* K * SCALE = 1 / (a * SCALE + (b * SCALE * SCALE) / (AOL * SCALE)) (scaled) */
-    /* AOL * SCALE = A1 * SCALE / A3 */
-
+    /* All quantities below are stored in AOL_SCALE fixed point.
+     * P     = s_LLC / c                 p     = s_LLC * SCALE / c
+     * AOL   = A1 / A3                   aol   = A1 * SCALE / A3
+     * K_den = a + b / AOL               k_den = a*SCALE + b*SCALE^2 / aol
+     * K     = 1 / K_den                 k     = SCALE^2 / k_den
+     * S     = P * K                     pk    = p * k / SCALE
+     * weight= 1 + S                     SCALE + pk
+     */
     u64 aol, k, k_den, p, pk;
 
-    if (c == 0 || a3 == 0 || (AOL_PARAM_A == 0 && AOL_PARAM_B == 0)) {
+    if (c == 0 || a3 == 0 || (AOL_PARAM_A_SCALED == 0 && AOL_PARAM_B == 0)) {
         set_current_aol_weight(AOL_SCALE);
         return;
     }
 
-    /* P = s_LLC / c (scaled) */
     p = mul_u64_u64_div_u64(s_llc, AOL_SCALE, c);
 
-    /* AOL = A1 / A3 (scaled) */
     aol = mul_u64_u64_div_u64(a1, AOL_SCALE, a3);
     if (aol == 0) aol = 1;
 
-    /* K = 1 / (a + b/AOL) (scaled) */
-    k_den = AOL_PARAM_A * AOL_SCALE + mul_u64_u64_div_u64(AOL_PARAM_B, (u64)AOL_SCALE * AOL_SCALE, aol);
+    k_den = AOL_PARAM_A_SCALED + mul_u64_u64_div_u64(AOL_PARAM_B, (u64)AOL_SCALE * AOL_SCALE, aol);
 
     k = mul_u64_u64_div_u64(AOL_SCALE, AOL_SCALE, k_den);
 
-    /* S = P * K (scaled) */
     pk = mul_u64_u64_div_u64(p, k, AOL_SCALE);
 
-    /* Final weight = 1 + S */
     set_current_aol_weight(pk + AOL_SCALE);
 }
 

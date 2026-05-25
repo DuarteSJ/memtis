@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 15
 SUBLEVEL = 19
-EXTRAVERSION = -htmm
+EXTRAVERSION = -memtis-aol
 NAME = Trick or Treat
 
 # *DOCUMENTATION*

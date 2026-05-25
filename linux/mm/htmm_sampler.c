@@ -14,8 +14,10 @@
 #include <linux/htmm.h>
 
 struct task_struct *access_sampling = NULL;
+/* mem_event[cpu][event] and aol_events[cpu][counter] are indexed by linear
+ * CPU id and sized to nr_cpu_ids. Entries outside the htmm cpumask stay NULL. */
 struct perf_event ***mem_event;
-static struct perf_event *aol_events[CPUS_PER_SOCKET][N_HTMMCOUNTERS]; /* A1, A3, s_LLC, c*/
+static struct perf_event ***aol_events; /* per cpu: {A1, A3, s_LLC, c} */
 static u64 aols_last_a1, aols_last_a3, aols_last_s_llc, aols_last_c;
 
 static bool valid_va(unsigned long addr)
@@ -99,14 +101,22 @@ static void aol_counters_release(void)
 {
     int cpu, counter;
 
-    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
+    if (!aol_events)
+        return;
+    for (cpu = 0; cpu < nr_cpu_ids; cpu++) {
+        if (!aol_events[cpu])
+            continue;
         for (counter = 0; counter < N_HTMMCOUNTERS; counter++) {
             if (aol_events[cpu][counter]) {
                 perf_event_release_kernel(aol_events[cpu][counter]);
                 aol_events[cpu][counter] = NULL;
             }
         }
+        kfree(aol_events[cpu]);
+        aol_events[cpu] = NULL;
     }
+    kfree(aol_events);
+    aol_events = NULL;
 }
 
 static int aol_counters_init(void)
@@ -120,7 +130,16 @@ static int aol_counters_init(void)
     };
     int cpu, counter;
 
-    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
+    aol_events = kcalloc(nr_cpu_ids, sizeof(*aol_events), GFP_KERNEL);
+    if (!aol_events)
+        return -ENOMEM;
+
+    for_each_htmm_cpu(cpu) {
+        aol_events[cpu] = kcalloc(N_HTMMCOUNTERS, sizeof(**aol_events), GFP_KERNEL);
+        if (!aol_events[cpu]) {
+            aol_counters_release();
+            return -ENOMEM;
+        }
         for (counter = 0; counter < N_HTMMCOUNTERS; counter++) {
             struct perf_event *ev;
 
@@ -153,9 +172,17 @@ static void aol_read_and_update(void)
     u64 en, ru;
     int cpu, i;
 
-    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
+    if (!aol_events)
+        return;
+    for_each_htmm_cpu(cpu) {
+        if (!aol_events[cpu])
+            continue;
         for (i = 0; i < N_HTMMCOUNTERS; i++) {
-            u64 val = perf_event_read_value(aol_events[cpu][i], &en, &ru);
+            u64 val;
+
+            if (!aol_events[cpu][i])
+                continue;
+            val = perf_event_read_value(aol_events[cpu][i], &en, &ru);
             /* counter was enabled but never actually ran in this window: result is untrustworthy */
             if (en && !ru) {
                 printk_ratelimited("aol_read_and_update: counter %d on cpu %d not running (en=%llu ru=%llu); skipping update\n",
@@ -177,13 +204,15 @@ static int pebs_init(pid_t pid, int node)
 {
     int cpu, event;
 
-    mem_event = kzalloc(sizeof(struct perf_event **) * CPUS_PER_SOCKET, GFP_KERNEL);
-    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
-	mem_event[cpu] = kzalloc(sizeof(struct perf_event *) * N_HTMMEVENTS, GFP_KERNEL);
-    }
-    
-    printk("pebs_init\n");   
-    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
+    mem_event = kcalloc(nr_cpu_ids, sizeof(*mem_event), GFP_KERNEL);
+    if (!mem_event)
+	return -ENOMEM;
+
+    printk("pebs_init\n");
+    for_each_htmm_cpu(cpu) {
+	mem_event[cpu] = kcalloc(N_HTMMEVENTS, sizeof(**mem_event), GFP_KERNEL);
+	if (!mem_event[cpu])
+	    return -ENOMEM;
 	for (event = 0; event < N_HTMMEVENTS; event++) {
 	    if (get_pebs_event(event) == N_HTMMEVENTS) {
 		mem_event[cpu][event] = NULL;
@@ -205,7 +234,11 @@ static void pebs_disable(void)
     int cpu, event;
 
     printk("pebs disable\n");
-    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
+    if (!mem_event)
+	return;
+    for_each_htmm_cpu(cpu) {
+	if (!mem_event[cpu])
+	    continue;
 	for (event = 0; event < N_HTMMEVENTS; event++) {
 	    if (mem_event[cpu][event])
 		perf_event_disable(mem_event[cpu][event]);
@@ -218,7 +251,11 @@ static void pebs_enable(void)
     int cpu, event;
 
     printk("pebs enable\n");
-    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
+    if (!mem_event)
+	return;
+    for_each_htmm_cpu(cpu) {
+	if (!mem_event[cpu])
+	    continue;
 	for (event = 0; event < N_HTMMEVENTS; event++) {
 	    if (mem_event[cpu][event])
 		perf_event_enable(mem_event[cpu][event]);
@@ -230,7 +267,11 @@ static void pebs_update_period(uint64_t value, uint64_t inst_value)
 {
     int cpu, event;
 
-    for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
+    if (!mem_event)
+	return;
+    for_each_htmm_cpu(cpu) {
+	if (!mem_event[cpu])
+	    continue;
 	for (event = 0; event < N_HTMMEVENTS; event++) {
 	    int ret;
 	    if (!mem_event[cpu][event])
@@ -303,7 +344,9 @@ static int ksamplingd(void *data)
 	    continue;
 	}
 	
-	for (cpu = 0; cpu < CPUS_PER_SOCKET; cpu++) {
+	for_each_htmm_cpu(cpu) {
+	    if (!mem_event[cpu])
+		continue;
 	    for (event = 0; event < N_HTMMEVENTS; event++) {
 		do {
 		    struct perf_buffer *rb;

@@ -3,7 +3,9 @@
 #define DEFERRED_SPLIT_ISOLATED 1
 
 #define BUFFER_SIZE	32 /* 128: 1MB */
-#define CPUS_PER_SOCKET 20
+/* Set of CPUs ksamplingd watches. Currently all CPUs on node 0; one place
+ * to change when per-node ksamplingd lands. */
+#define for_each_htmm_cpu(cpu) for_each_cpu((cpu), cpumask_of_node(0))
 #define MAX_MIGRATION_RATE_IN_MBPS  2048 /* 2048MB per sec */
 
 
@@ -16,13 +18,16 @@
 #define STLB_MISS_STORES    0x12d0
 #define STLB_MISS_LOADS	    0x11d0
 
-/* pmu counters */
+/* pmu counters
+ * Raw encoding: cmask<<24 | umask<<8 | event. USR/OS/EN bits live in
+ * attr.exclude_*, not in config — keep config to event/umask/cmask only.
+ */
 #define N_HTMMCOUNTERS 4 /* A1, A3, s_LLC, c */
-#define CYCLE_ACTIVITY_STALLS_L3_MISS   0x060014 /* Number of LLC stall cycles */
-#define CPU_CLK_UNHALTED_THREAD         0x003c   /* Number of cycles */
-#define ORO_CYCLES_WITH_DEMAND_DATA_RD  0x4301b1 /* Cycles with pending requests */
-#define ORO_DEMAND_DATA_RD              0x4101b1 /* Number of pending requests per cycle */
-#define OFFCORE_REQUESTS_DEMAND_DATA_RD 0x0160b0 /* Number of requests to uncore */
+#define CYCLE_ACTIVITY_STALLS_L3_MISS   0x060006a3 /* ev=0xA3, umask=0x06, cmask=6: LLC stall cycles */
+#define CPU_CLK_UNHALTED_THREAD         0x0000003c /* ev=0x3C, umask=0x00: thread cycles */
+#define ORO_CYCLES_WITH_DEMAND_DATA_RD  0x010001b1 /* ev=0xB1, umask=0x01, cmask=1: cycles w/ pending demand reads (A1) */
+#define ORO_DEMAND_DATA_RD              0x000001b1 /* ev=0xB1, umask=0x01: outstanding demand reads per cycle (A2, unused) */
+#define OFFCORE_REQUESTS_DEMAND_DATA_RD 0x000001b0 /* ev=0xB0, umask=0x01: # demand read requests (A3) */
 
 /* AOL-weighted hotness: fixed-point scale used for aol_weight and
  * weighted_accesses. Power of two so the descale in get_idx is a bit shift. */
