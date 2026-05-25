@@ -132,8 +132,8 @@ awk -F, '
         b = (n*sxy - sx*sy) / denom
         a = (sy - b*sx) / n
         printf "\nfit:  a = %.4f   b = %.4f   (K = 1 / (a + b/AOL))\n", a, b
-        printf "scaled defaults for kernel:\n"
-        printf "  AOL_PARAM_A_SCALED = %d   (= %.4f * AOL_SCALE=1024)\n", int(a*1024+0.5), a
-        printf "  AOL_PARAM_B        = %d\n", int(b+0.5)
+        printf "scaled defaults for kernel (AOL_SCALE=1024):\n"
+        printf "  AOL_PARAM_A_SCALED = %d   (= %.4f * 1024)\n", int(a*1024+0.5), a
+        printf "  AOL_PARAM_B_SCALED = %d   (= %.4f * 1024)\n", int(b*1024+0.5), b
     }
 ' "$OUT"
