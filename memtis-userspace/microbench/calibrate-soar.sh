@@ -107,7 +107,6 @@ run_workload() {
 }
 
 run_workload "pchase"   0.0 "$BUF_A" "$BUF_B"
-run_workload "mix"      0.5 "$BUF_A" "$BUF_B"
 run_workload "stream"   1.0 "$BUF_A" "$BUF_B"
 
 echo
