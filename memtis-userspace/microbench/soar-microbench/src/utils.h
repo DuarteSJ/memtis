@@ -18,7 +18,8 @@ struct chase_struct {
 typedef struct header_struct {
     int print;
     uint64_t num_thread; /* number of threads */
-    int buf_a_numa_node; /* which numa node for buffer */
+    int buf_a_numa_node; /* numa node for pchase buffer A (-r) */
+    int buf_b_numa_node; /* numa node for seq buffer B (-N) */
     char *buf_a;
     uint64_t buf_size_a;
     char *buf_b;

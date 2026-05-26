@@ -19,6 +19,7 @@ void set_default(header_t *header)
     header->buf_size_a = (1 << 30); /* pc */
     header->buf_size_b = (1 << 30); /* bw */
     header->buf_a_numa_node = 0;
+    header->buf_b_numa_node = 0;
     header->op_iter = 5;
     header->random = true;
     header->halt = 0;
@@ -34,7 +35,7 @@ int parse_arg(int argc, char *argv[], header_t *header)
 {
     int opt;
     set_default(header);
-    while ((opt = getopt(argc, argv, "t:i:r:I:R:A:B:S:")) != -1) {
+    while ((opt = getopt(argc, argv, "t:i:r:I:R:A:B:S:N:")) != -1) {
         switch (opt) {
         case 't':
             header->num_thread = atoi(optarg);
@@ -63,6 +64,9 @@ int parse_arg(int argc, char *argv[], header_t *header)
         case 'S': /* seq multiplier (default 26 per paper) */
             header->seq_mult = atoi(optarg);
             assert(header->seq_mult > 0);
+            break;
+        case 'N': /* numa node for seq buffer B */
+            header->buf_b_numa_node = atoi(optarg);
             break;
         }
     }

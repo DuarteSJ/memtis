@@ -200,18 +200,16 @@ void *pc_thread(void *arg)
         printf("ERROR stick_this_thread_to_core\n");
         return NULL;
     }
-    ret = init_buf_reg_alloc(header->buf_size_a, &(header->buf_a));
-    /* fprintf(stderr, "init_buf_reg_alloc in pc_thread\n"); */
+    ret = init_buf(header->buf_size_a, header->buf_a_numa_node, &(header->buf_a));
     if (ret < 0) {
-        fprintf(stderr, "ERROR init_buf_reg_alloc in thread %d.\n",
-                header->thread_idx);
-        free(header->buf_a);
+        fprintf(stderr, "ERROR init_buf (pchase) in thread %d on node %d.\n",
+                header->thread_idx, header->buf_a_numa_node);
         return NULL;
     }
     header->start_addr_a = &(header->buf_a[0]);
     pthread_barrier_wait(&alloc_barrier);
     pointer_chasing(header);
-    aligned_free(header->buf_a);
+    numa_free(header->buf_a, header->buf_size_a);
 }
 
 void *bw_thread(void *arg)
@@ -225,16 +223,15 @@ void *bw_thread(void *arg)
         return NULL;
     }
     pthread_barrier_wait(&alloc_barrier);
-    ret = init_buf_reg_alloc(header->buf_size_b, &(header->buf_b));
-    /* fprintf(stderr, "init_buf_reg_alloc in bw_thread\n"); */
+    ret = init_buf(header->buf_size_b, header->buf_b_numa_node, &(header->buf_b));
     if (ret < 0) {
-        fprintf(stderr, "ERROR init_buf in thread %d.\n", header->thread_idx);
-        free(header->buf_b);
+        fprintf(stderr, "ERROR init_buf (seq) in thread %d on node %d.\n",
+                header->thread_idx, header->buf_b_numa_node);
         return NULL;
     }
     header->start_addr_b = &(header->buf_b[0]);
     bandwidth(header);
-    aligned_free(header->buf_b);
+    numa_free(header->buf_b, header->buf_size_b);
 }
 
 int run_split(header_t *header)
