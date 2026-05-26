@@ -69,6 +69,10 @@ void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
     pk = mul_u64_u64_div_u64(p, k, AOL_SCALE);
 
     set_current_aol_weight(pk + AOL_SCALE);
+
+    printk_ratelimited(
+        "htmm_aol: a1=%llu a3=%llu s_llc=%llu c=%llu aol=%llu p=%llu k=%llu s=%llu weight=%llu\n",
+        a1, a3, s_llc, c, aol, p, k, pk, pk + AOL_SCALE);
 }
 
 void htmm_mm_init(struct mm_struct *mm)
