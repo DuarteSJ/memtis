@@ -20,7 +20,7 @@
 #   OUT      csv (default calibrate-soar.csv)
 set -euo pipefail
 
-BENCH=${BENCH:-$HOME/SoarAlto/src/microbenchmark/src/bench}
+BENCH=${BENCH:-$(dirname "$(readlink -f "$0")")/soar-microbench/src/microbenchmark/src/bench}
 FAST=${FAST:-0}
 SLOW=${SLOW:-2}
 DUR=${DUR:-15}
