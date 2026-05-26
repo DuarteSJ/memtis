@@ -169,8 +169,7 @@ void bandwidth(header_t *header)
     memset(src, 0xFF, header->buf_size_b);
     *((uint64_t *) &src[header->buf_size_b]) = 0;
     read_loop(src, header->buf_size_b);
-    /* TODO: op_iter*26; */
-    for (int k = 0; k < header->op_iter * 26; k += 1) {
+    for (int k = 0; k < header->op_iter * header->seq_mult; k += 1) {
         read_loop(src, header->buf_size_b);
     }
     return;

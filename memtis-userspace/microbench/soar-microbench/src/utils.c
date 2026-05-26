@@ -27,13 +27,14 @@ void set_default(header_t *header)
     assert(header->num_chase_block > 0);
     header->chase_interval = header->num_chase_block;
     header->ratio = 0.0;
+    header->seq_mult = 26;
 }
 
 int parse_arg(int argc, char *argv[], header_t *header)
 {
     int opt;
     set_default(header);
-    while ((opt = getopt(argc, argv, "t:i:r:I:R:A:B:")) != -1) {
+    while ((opt = getopt(argc, argv, "t:i:r:I:R:A:B:S:")) != -1) {
         switch (opt) {
         case 't':
             header->num_thread = atoi(optarg);
@@ -58,6 +59,10 @@ int parse_arg(int argc, char *argv[], header_t *header)
             break;
         case 'B': /* bw */
             header->buf_size_b = ((uint64_t)atoi(optarg) * ((1 << 20)));
+            break;
+        case 'S': /* seq multiplier (default 26 per paper) */
+            header->seq_mult = atoi(optarg);
+            assert(header->seq_mult > 0);
             break;
         }
     }

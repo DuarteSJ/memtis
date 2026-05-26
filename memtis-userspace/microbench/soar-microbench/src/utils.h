@@ -42,6 +42,10 @@ typedef struct header_struct {
 
     float ratio;
 
+    /* seq:pc iteration multiplier. Paper §2 uses 26 to balance
+     * runtimes (pc issues 4B loads, seq 26x to match). Tune per HW. */
+    int seq_mult;
+
     volatile int halt;
 } header_t;
 
