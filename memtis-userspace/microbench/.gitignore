@@ -1,4 +1,3 @@
-pchase
-stream
-*.o
-calibrate.csv
+soar-microbench/src/bench
+soar-microbench/src/*.o
+*.csv

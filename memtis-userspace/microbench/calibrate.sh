@@ -26,7 +26,7 @@ SLOW=${SLOW:-2}
 DUR=${DUR:-15}
 BUF_A=${BUF_A:-2048}
 BUF_B=${BUF_B:-2048}
-OUT=${OUT:-calibrate-soar.csv}
+OUT=${OUT:-$(dirname "$(readlink -f "$0")")/results/$(hostname)-$(date +%Y-%m-%d).csv}
 
 EVENTS=r010001b1,r000001b0,r060006a3,r0000003c
 
