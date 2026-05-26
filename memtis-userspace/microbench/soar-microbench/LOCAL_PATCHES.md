@@ -19,7 +19,7 @@ it a CLI param and changed the default to 46 (it's what works for our machine).
 **Tuning on machine.** Measure `-R 0.0` and `-R 1.0` runtimes at default
 `-S 26`, then set `S = 26 * (t_pchase / t_stream)`.
 
-## `-N <node>` flag — per-buffer NUMA placement
+## `-N <node>` flag. Per-buffer NUMA placement
 
 **Why.** Upstream allocates both buffers via plain `malloc`
 (`init_buf_reg_alloc`), so per-buffer NUMA control was impossible.
@@ -35,7 +35,7 @@ must live on a chosen tier independently.
                   `numa_free`
 
 **Flags.**
-- `-r <node>` (existing) -> pchase buffer A NUMA node
+- `-r <node>` (existing, but previously unused) -> pchase buffer A NUMA node
 - `-N <node>` (new)      -> seq    buffer B NUMA node
 
 Both default to node 0. Example placements:
@@ -46,8 +46,3 @@ Both default to node 0. Example placements:
 ./bench -R 0.5 -r 0 -N 2   # Cold-on-DRAM  (pc on DRAM, seq on Optane)
 ./bench -R 0.5 -r 2 -N 2   # All-on-Optane (lower bound)
 ```
-
-**Caveat.** Replaced `init_buf_reg_alloc` (malloc) entirely. If the
-upstream code ever depends on the 64-byte ALIGN logic from
-`init_buf_reg_alloc`, you'll need to layer alignment on top of
-`numa_alloc_onnode` (which already returns page-aligned).
