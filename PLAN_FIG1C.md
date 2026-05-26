@@ -132,15 +132,28 @@ Plot bar chart matching Figure 1c style.
 
 ## After Figure 1c works
 
-Then we add the runtime mode toggle:
+Then we add a runtime toggle. **Important:** AOL weighting is orthogonal
+to `htmm_mode` (which is the migration *policy* enum: NO_MIG, BASELINE,
+HUGEPAGE_OPT, HUGEPAGE_OPT_V2). AOL changes how the hotness *input* is
+computed, not how migration decisions are made. Should compose with any
+mode.
 
-- New `htmm_mode` value (likely `4 = AOL`).
-- `htmm_mode` enum drives whether `update_aol_counters` actually fires
-  or `aol_weight` stays pinned to `AOL_SCALE` (=> equivalent to stock
-  behavior, except still using our patched pginfo paths — which is
-  exactly what Step 3 of the test plan asks for).
-- Validates: with `mode=baseline` we recover stock numbers; with
-  `mode=AOL` we recover the AOL-kernel numbers from this exercise.
+Design: new sysfs file alongside `htmm_mode`:
+
+```
+/sys/kernel/mm/htmm/htmm_aol_weighting   0 = off (stock), 1 = on (AOL)
+```
+
+- `=0`: pin `aol_weight` to `AOL_SCALE`, skip `update_aol_counters`
+  body. Per-page weight = raw access count = stock MEMTIS semantics.
+- `=1`: compute `aol_weight` from PMU counters every period. Per-page
+  weight = access × aol_weight = our patch.
+
+Validates: with `htmm_aol_weighting=0` we recover stock numbers
+(even on the AOL kernel) -> proves the AOL kernel's other deltas
+(per-CPU iteration, PMU encodings) don't shift baseline. With `=1` we
+recover the AOL-kernel numbers from this exercise. This is exactly
+Step 3 of `TODO.md` (weight pinned to `AOL_SCALE`, regression check).
 
 Then onward to Step 4–8 of `TODO.md` (static non-unit weight, dynamic
 weight, ground-truth correlation, full tiered run, soak).
