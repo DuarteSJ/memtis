@@ -223,7 +223,10 @@ void *bw_thread(void *arg)
         return NULL;
     }
     pthread_barrier_wait(&alloc_barrier);
-    ret = init_buf(header->buf_size_b, header->buf_b_numa_node, &(header->buf_b));
+    /* +64 bytes slack: bandwidth() writes a sentinel one u64 past buf_size_b.
+     * Upstream relied on malloc over-allocation; numa_alloc_onnode hands back
+     * exactly the requested page-aligned size. */
+    ret = init_buf(header->buf_size_b + 64, header->buf_b_numa_node, &(header->buf_b));
     if (ret < 0) {
         fprintf(stderr, "ERROR init_buf (seq) in thread %d on node %d.\n",
                 header->thread_idx, header->buf_b_numa_node);
@@ -231,7 +234,7 @@ void *bw_thread(void *arg)
     }
     header->start_addr_b = &(header->buf_b[0]);
     bandwidth(header);
-    numa_free(header->buf_b, header->buf_size_b);
+    numa_free(header->buf_b, header->buf_size_b + 64);
 }
 
 int run_split(header_t *header)
