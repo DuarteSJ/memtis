@@ -17,9 +17,9 @@ run once per target machine.
 
 | path                     | purpose                                          |
 |--------------------------|--------------------------------------------------|
-| `calibrate.sh`           | entrypoint — drives bench, fits a, b             |
+| `calibrate.sh`           | entrypoint. Drives bench, fits a, b             |
 | `soar-microbench/`       | vendored SoarAlto microbench (pchase + stream)   |
-| `soar-microbench/LOCAL_PATCHES.md` | what we changed upstream                |
+| `soar-microbench/LOCAL_PATCHES.md` | what changed from the original benchmark |
 | `results/`               | calibration CSVs (one per machine/run)           |
 
 ## Usage
@@ -50,19 +50,19 @@ cd soar-microbench/src && make
 For each workload (`pchase` = pure pointer-chase, `stream` = pure
 sequential read):
 
-1. Pilot on FAST tier with `-i 1` → measure wall time.
+1. Pilot on FAST tier with `-i 1` -> measure wall time.
 2. Pick `-i` ≈ `DUR / t_pilot` so each run lasts ~`DUR` seconds.
-3. Run on FAST tier with `perf stat` → A1, A3, s_LLC, c, t_fast.
-4. Run on SLOW tier → t_slow.
+3. Run on FAST tier with `perf stat` -> A1, A3, s_LLC, c, t_fast.
+4. Run on SLOW tier -> t_slow.
 5. Compute `AOL = A1/A3`, `P = s_LLC/c`, `S = t_slow/t_fast - 1`,
    `K = S/P`.
 
-Two `(AOL, K)` pairs → linearize `1/K = a + b·(1/AOL)` → two equations,
+Two `(AOL, K)` pairs -> linearize `1/K = a + b·(1/AOL)` -> two equations,
 two unknowns, exact solve. (Code uses OLS so adding more workloads
 works without changes.)
 
 PMU events (`r010001b1,r000001b0,r060006a3,r0000003c`):
-- `r010001b1` = ORO.CYCLES_WITH_DEMAND_DATA_RD       (A1)
+- `r010001b1` = ORO.CYCLES_WITH_DEMAND_DATA_RD        (A1)
 - `r000001b0` = OFFCORE_REQUESTS.DEMAND_DATA_RD       (A3)
 - `r060006a3` = CYCLE_ACTIVITY.STALLS_L3_MISS         (s_LLC)
 - `r0000003c` = CPU_CLK_UNHALTED.THREAD               (c)
@@ -81,5 +81,5 @@ output already prints these rounded values.
 
 ## Current nvram values
 
-`a = 0.0625, b = 1.28` → `A_SCALED=64, B_SCALED=1311`.
+`a = 0.0625, b = 1.28` -> `A_SCALED=64, B_SCALED=1311`.
 See `results/` for raw measurements.
