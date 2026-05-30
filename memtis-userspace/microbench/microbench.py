@@ -60,8 +60,8 @@ STATIC_PLACEMENT = {
 
 WORKLOAD_LABELS = {
     "dram":   "All on\nDRAM",
-    "hot":    "Hot on DRAM\n(pc→Optane,\nseq→DRAM)",
-    "cold":   "Cold on DRAM\n(pc→DRAM,\nseq→Optane)",
+    "hot":    "Hot on DRAM\n(pc->Optane,\nseq->DRAM)",
+    "cold":   "Cold on DRAM\n(pc->DRAM,\nseq->Optane)",
     "opt":    "All on\nOptane",
     "memtis": "MEMTIS\nmanaged",
 }
@@ -71,7 +71,7 @@ WORKLOAD_LABELS = {
 
 def need_root():
     if os.geteuid() != 0:
-        sys.exit("run subcommand needs root (sysfs + cgroup writes)")
+        sys.exit("this command must be run as root")
 
 
 def sh(cmd, **kw):
