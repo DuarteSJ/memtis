@@ -16,7 +16,7 @@
 
 BENCH=./soar-microbench/src/bench
 SCRIPTS=../scripts
-ITER=${ITER:2}
+ITER=${ITER:-2}
 SEQ_MULT=${SEQ_MULT:-46}
 BUF_A=${BUF_A:-2048}
 BUF_B=${BUF_B:-2048}
