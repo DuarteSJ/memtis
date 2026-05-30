@@ -343,7 +343,7 @@ def _bar(agg, value_col, ylabel, title, out_path,
             yerr = None
         offset = (i - (len(labels) - 1) / 2) * width
         bars = ax.bar([xi + offset for xi in x], vals, width, label=lab,
-                      yerr=yerr, capsize=3)
+                      yerr=yerr, capsize=2)
         for b, v in zip(bars, vals):
             if v > 0:
                 ax.annotate(f"{v:.2f}", (b.get_x() + b.get_width() / 2, v),
@@ -375,7 +375,7 @@ def main():
     pr.add_argument("--buf-a", type=int, default=2048, help="MB")
     pr.add_argument("--buf-b", type=int, default=2048, help="MB")
     pr.add_argument("--seq-mult", type=int, default=46)
-    pr.add_argument("--dram-cap", default="3GB",
+    pr.add_argument("--dram-cap", default="2GB",
                     help="cgroup DRAM cap for memtis runs")
     pr.add_argument("--csv", help="CSV path (default encodes params + date)")
     pr.add_argument("--plot", action="store_true", help="plot after the run")
