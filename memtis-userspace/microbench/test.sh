@@ -16,7 +16,7 @@
 
 BENCH=./soar-microbench/src/bench
 SCRIPTS=../scripts
-ITER=${ITER:-2}
+ITER=${ITER:-5}
 SEQ_MULT=${SEQ_MULT:-46}
 BUF_A=${BUF_A:-2048}
 BUF_B=${BUF_B:-2048}
@@ -47,6 +47,13 @@ else
     echo "dax1.0 already system-ram"
 fi
 
+# ---- CSV output (append-only) ----
+CSV=${CSV:-results/$(hostname)-$(uname -r).csv}
+mkdir -p "$(dirname "$CSV")"
+if [ ! -f "$CSV" ]; then
+    echo "timestamp,kernel,workload,iter,buf_a_mb,buf_b_mb,seq_mult,dram_cap,pc_node,seq_node,walltime_s" > "$CSV"
+fi
+
 # wrap time to get more accurate timings
 walltime() {
     local t0 t1
@@ -56,20 +63,33 @@ walltime() {
     echo "$t1 - $t0" | bc -l
 }
 
-run_dram()  { printf "All DRAM: ";                    walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 0 -S $SEQ_MULT; }
-run_hot()   { printf "pchase Optane, seq DRAM: ";     walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 0 -S $SEQ_MULT; }
-run_cold()  { printf "pchase DRAM, seq Optane: ";     walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 2 -S $SEQ_MULT; }
-run_opt()   { printf "All Optane: ";                  walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 2 -S $SEQ_MULT; }
+# label, pc_node, seq_node, dram_cap, bench-args...
+log_run() {
+    local label="$1" pc="$2" seq="$3" cap="$4"
+    shift 4
+    local t
+    t=$(walltime "$@")
+    printf "%s: %s\n" "$label" "$t"
+    printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n" \
+        "$(date -Iseconds)" "$(uname -r)" "$label" \
+        "$ITER" "$BUF_A" "$BUF_B" "$SEQ_MULT" "$cap" "$pc" "$seq" "$t" \
+        >> "$CSV"
+}
+
+run_dram()  { log_run dram 0 0 - $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 0 -S $SEQ_MULT; }
+run_hot()   { log_run hot  2 0 - $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 0 -S $SEQ_MULT; }
+run_cold()  { log_run cold 0 2 - $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 2 -S $SEQ_MULT; }
+run_opt()   { log_run opt  2 2 - $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 2 -S $SEQ_MULT; }
 
 run_memtis() {
-    printf "\n===MEMTIS managed (DRAM cap %s, both unbound)===\n\n" "$DRAM_CAP"
+    printf "\n===MEMTIS managed (DRAM cap %s, both unbound)===\n" "$DRAM_CAP"
 
     $SCRIPTS/set_htmm_memcg.sh htmm remove 2>/dev/null
     $SCRIPTS/set_htmm_memcg.sh htmm $$ enable
     $SCRIPTS/set_mem_size.sh   htmm 0 $DRAM_CAP
 
     sleep 2
-    walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -S $SEQ_MULT
+    log_run memtis -1 -1 "$DRAM_CAP" $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -S $SEQ_MULT
     sleep 1
 
     $SCRIPTS/set_htmm_memcg.sh htmm $$ disable
