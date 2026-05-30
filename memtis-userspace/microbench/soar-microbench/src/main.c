@@ -200,7 +200,10 @@ void *pc_thread(void *arg)
         printf("ERROR stick_this_thread_to_core\n");
         return NULL;
     }
-    ret = init_buf(header->buf_size_a, header->buf_a_numa_node, &(header->buf_a));
+    if (header->buf_a_numa_node < 0)
+        ret = init_buf_reg_alloc(header->buf_size_a, &(header->buf_a));
+    else
+        ret = init_buf(header->buf_size_a, header->buf_a_numa_node, &(header->buf_a));
     if (ret < 0) {
         fprintf(stderr, "ERROR init_buf (pchase) in thread %d on node %d.\n",
                 header->thread_idx, header->buf_a_numa_node);
@@ -209,7 +212,11 @@ void *pc_thread(void *arg)
     header->start_addr_a = &(header->buf_a[0]);
     pthread_barrier_wait(&alloc_barrier);
     pointer_chasing(header);
-    numa_free(header->buf_a, header->buf_size_a);
+    if (header->buf_a_numa_node < 0)
+        aligned_free(header->buf_a);
+    else
+        numa_free(header->buf_a, header->buf_size_a);
+    return NULL;
 }
 
 void *bw_thread(void *arg)
@@ -226,7 +233,10 @@ void *bw_thread(void *arg)
     /* +64 bytes slack: bandwidth() writes a sentinel one u64 past buf_size_b.
      * Upstream relied on malloc over-allocation; numa_alloc_onnode hands back
      * exactly the requested page-aligned size. */
-    ret = init_buf(header->buf_size_b + 64, header->buf_b_numa_node, &(header->buf_b));
+    if (header->buf_b_numa_node < 0)
+        ret = init_buf_reg_alloc(header->buf_size_b + 64, &(header->buf_b));
+    else
+        ret = init_buf(header->buf_size_b + 64, header->buf_b_numa_node, &(header->buf_b));
     if (ret < 0) {
         fprintf(stderr, "ERROR init_buf (seq) in thread %d on node %d.\n",
                 header->thread_idx, header->buf_b_numa_node);
@@ -234,7 +244,11 @@ void *bw_thread(void *arg)
     }
     header->start_addr_b = &(header->buf_b[0]);
     bandwidth(header);
-    numa_free(header->buf_b, header->buf_size_b + 64);
+    if (header->buf_b_numa_node < 0)
+        aligned_free(header->buf_b);
+    else
+        numa_free(header->buf_b, header->buf_size_b + 64);
+    return NULL;
 }
 
 int run_split(header_t *header)

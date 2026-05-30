@@ -18,8 +18,11 @@ void set_default(header_t *header)
     header->num_thread = 1;
     header->buf_size_a = (1 << 30); /* pc */
     header->buf_size_b = (1 << 30); /* bw */
-    header->buf_a_numa_node = 0;
-    header->buf_b_numa_node = 0;
+    /* -1 = unbound. Skip numa_alloc_onnode, use libc malloc so the
+     * kernel (and whatever system, if enabled) places and migrates freely.
+     * Override with `-r <node>` / `-N <node>` for explicit pinning. */
+    header->buf_a_numa_node = -1;
+    header->buf_b_numa_node = -1;
     header->op_iter = 5;
     header->random = true;
     header->halt = 0;

@@ -29,20 +29,30 @@ must live on a chosen tier independently.
 
 **Files touched.**
 - `src/utils.h`  -> added `int buf_b_numa_node` to `header_t`
-- `src/utils.c`  -> default `buf_b_numa_node = 0`, added `-N` to getopt
-- `src/main.c`   -> swapped `init_buf_reg_alloc` -> `init_buf`
-                  (which uses `numa_alloc_onnode`), `aligned_free` ->
-                  `numa_free`
+- `src/utils.c`  -> default both nodes to `-1` (unbound), added `-N` to getopt
+- `src/main.c`   -> each thread picks alloc path by node value:
+                  `node < 0` -> `init_buf_reg_alloc` (libc malloc, no mbind);
+                  `node >= 0` -> `init_buf` (`numa_alloc_onnode`).
+                  Free path mirrors (`aligned_free` vs `numa_free`).
 
 **Flags.**
 - `-r <node>` (existing, but previously unused) -> pchase buffer A NUMA node
 - `-N <node>` (new)      -> seq    buffer B NUMA node
 
-Both default to node 0. Example placements:
+**Defaults: unbound.** Omitting both flags makes the bench issue no
+`mbind`; the kernel allocates wherever capacity is available and
+MEMTIS (or whatever other system, if enabled) is free to migrate
+pages between tiers. Required for MEMTIS-managed runs since any explicit
+`mbind` would pin pages and block migration.
+
+Pass `-r <node>`/`-N <node>` for explicit static placement (Fig 1c
+reference bars):
 
 ```
-./bench -R 0.5 -r 0 -N 0   # All-on-DRAM
-./bench -R 0.5 -r 2 -N 0   # Hot-on-DRAM   (pc on Optane, seq on DRAM)
-./bench -R 0.5 -r 0 -N 2   # Cold-on-DRAM  (pc on DRAM, seq on Optane)
-./bench -R 0.5 -r 2 -N 2   # All-on-Optane (lower bound)
+./bench -R 0.5              # both unbound -> kernel chooses
+./bench -R 0.5 -r 0 -N 0    # All-on-DRAM
+./bench -R 0.5 -r 2 -N 0    # Hot-on-DRAM   (pc on Optane, seq on DRAM)
+./bench -R 0.5 -r 0 -N 2    # Cold-on-DRAM  (pc on DRAM, seq on Optane)
+./bench -R 0.5 -r 2 -N 2    # All-on-Optane (lower bound)
+./bench -R 0.5 -r 0 -N -1   # mixed: pc pinned to DRAM, seq unbound
 ```
