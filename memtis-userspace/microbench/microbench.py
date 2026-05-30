@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.11
 """
 Orchestrator for soar-microbench: runs static + MEMTIS-managed configurations,
 writes a fresh CSV per invocation, plots.
