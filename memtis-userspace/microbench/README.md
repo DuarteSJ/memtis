@@ -1,28 +1,37 @@
-# microbench — AOL K-curve calibration
+# microbench — AOL K-curve calibration + MEMTIS A/B experiments
 
-Calibrates the per-machine constants `a` and `b` used by the SOAR/ALTO
-slowdown model:
+Two distinct uses:
+
+1. **Calibrate** the per-machine constants `a`, `b` for the SOAR/ALTO
+   slowdown model (one-shot, per machine).
+2. **Experiment** — run static and MEMTIS-managed placements of the
+   soar-microbench mix workload, log timings to CSV, plot results.
+   Used to replicate SOAR Figure 1c and to A/B stock MEMTIS vs the
+   AOL-weighted variant.
+
+The slowdown model the calibration feeds:
 
 ```
-K   = 1 / (a + b/AOL)
-S   = P * K
+K      = 1 / (a + b/AOL)
+S      = P * K
 weight = 1 + S
 ```
 
 The kernel uses `weight` to scale page hotness inside MEMTIS. `a` and `b`
-depend only on hardware (CPU + slow-tier pair), so this calibration is
-run once per target machine.
+depend only on hardware (CPU + slow-tier pair).
 
 ## Layout
 
 | path                     | purpose                                          |
 |--------------------------|--------------------------------------------------|
-| `calibrate.sh`           | entrypoint. Drives bench, fits a, b             |
+| `calibrate.sh`           | calibration entrypoint. Drives bench, fits a, b |
+| `configure_memtis.sh`    | one-shot: htmm sysfs tunables + THP + numa_balancing off |
+| `microbench.py`          | orchestrator: run static + MEMTIS-managed workloads, append CSV, plot |
 | `soar-microbench/`       | vendored SoarAlto microbench (pchase + stream)   |
 | `soar-microbench/LOCAL_PATCHES.md` | what changed from the original benchmark |
-| `results/`               | calibration CSVs (one per machine/run)           |
+| `results/`               | CSVs + PNGs                                      |
 
-## Usage
+## Usage — calibration
 
 ```bash
 # build the bench binary once
@@ -32,6 +41,61 @@ cd soar-microbench/src && make
 ./calibrate.sh
 # -> writes results/<host>-<date>.csv and prints a, b
 ```
+
+## Usage — experiments
+
+Prereqs:
+- bench binary built (`make -C soar-microbench/src`).
+- DRAM as NUMA node 0; slow tier (Optane) as NUMA node 2.
+- htmm sysfs alive (running an htmm/MEMTIS kernel).
+- Once per session: `sudo ./configure_memtis.sh` (htmm tunables, THP=always,
+  disables auto-NUMA balancing).
+
+Run:
+
+```bash
+# static placement bars, 3 reps each
+sudo ./microbench.py run static --reps 3
+
+# MEMTIS-managed bar with 2 GB DRAM cap, 5 reps
+sudo ./microbench.py run memtis --reps 5 --dram-cap 2GB
+
+# everything (4 static + memtis), 3 reps, plot at end
+sudo ./microbench.py run all --reps 3 --plot
+
+# arbitrary subset
+sudo ./microbench.py run dram cold memtis --reps 2
+
+# plot only (from existing CSV)
+./microbench.py plot                        # newest under results/
+./microbench.py plot results/foo.csv --show
+
+# end-of-session: dax1.0 back to devdax
+sudo ./microbench.py revert
+```
+
+Workloads:
+
+| name    | meaning                                                       |
+|---------|---------------------------------------------------------------|
+| `dram`  | pchase + seq both on DRAM (baseline)                          |
+| `hot`   | pchase on Optane, seq on DRAM ("hot-count" buffer fast tier)  |
+| `cold`  | pchase on DRAM, seq on Optane ("cold-count" buffer fast tier) |
+| `opt`   | both on Optane (lower bound)                                  |
+| `memtis`| both buffers unbound, cgroup caps node-0 DRAM, MEMTIS decides |
+| `static`| alias: `dram hot cold opt`                                    |
+| `all`   | alias: `dram hot cold opt memtis`                             |
+
+CSV: `results/<host>-<kernel>.csv`. One row per rep; kernel column lets
+you mix stock vs AOL runs in one file. Override path with `--csv PATH`.
+
+Tunables (`run` flags): `--reps`, `--iter`, `--buf-a`, `--buf-b`,
+`--seq-mult`, `--dram-cap`. Defaults match the calibration setup
+(`-i 5 -A 2048 -B 2048 -S 46`, cap `3GB`).
+
+Plots: two PNGs per CSV under `results/`:
+- `<stem>.walltime.png` — raw seconds.
+- `<stem>.relperf.png`  — `t_dram / t_x`, SOAR Fig 1c style.
 
 ## Tunables (env vars for `calibrate.sh`)
 
