@@ -1,5 +1,4 @@
-#!/usr/bin/env bash
-# Calibrate a, b for AOL K-curve using the SoarAlto microbenchmark.
+# Calibrate a, b for AOL K-curve using SoarAlto microbenchmark.
 # https://github.com/MoatLab/SoarAlto/tree/main/src/microbenchmark
 #
 # Workflow per workload (pchase, stream):

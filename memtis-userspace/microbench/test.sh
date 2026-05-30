@@ -16,7 +16,7 @@
 
 BENCH=./soar-microbench/src/bench
 SCRIPTS=../scripts
-ITER=${ITER:-2}
+ITER=${ITER:0}
 SEQ_MULT=${SEQ_MULT:-46}
 BUF_A=${BUF_A:-2048}
 BUF_B=${BUF_B:-2048}
@@ -47,10 +47,19 @@ else
     echo "dax1.0 already system-ram"
 fi
 
-run_dram()  { echo -e "\n===All on DRAM===\n";                       time $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 0 -S $SEQ_MULT; }
-run_hot()   { echo -e "\n===pchase on Optane, seq on DRAM===\n";     time $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 0 -S $SEQ_MULT; }
-run_cold()  { echo -e "\n===pchase on DRAM, seq on Optane===\n";     time $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 2 -S $SEQ_MULT; }
-run_opt()   { echo -e "\n===All on Optane===\n";                     time $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 2 -S $SEQ_MULT; }
+# wrap time to get more accurate timings
+walltime() {
+    local t0 t1
+    t0=$(date +%s.%N)
+    "$@" >/dev/null
+    t1=$(date +%s.%N)
+    echo "$t1 - $t0" | bc -l
+}
+
+run_dram()  { echo -e "All DRAM: ";                    walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 0 -S $SEQ_MULT; }
+run_hot()   { echo -e "pchase Optane, seq DRAM: ";     walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 0 -S $SEQ_MULT; }
+run_cold()  { echo -e "pchase DRAM, seq Optane: ";     walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 2 -S $SEQ_MULT; }
+run_opt()   { echo -e "All Optane: ";                  walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 2 -S $SEQ_MULT; }
 
 run_memtis() {
     echo -e "\n===MEMTIS managed (DRAM cap $DRAM_CAP, both unbound)===\n"
@@ -60,7 +69,7 @@ run_memtis() {
     $SCRIPTS/set_mem_size.sh   htmm 0 $DRAM_CAP
 
     sleep 2
-    time $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -S $SEQ_MULT
+    walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -S $SEQ_MULT
     sleep 1
 
     $SCRIPTS/set_htmm_memcg.sh htmm $$ disable
