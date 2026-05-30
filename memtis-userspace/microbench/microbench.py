@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Orchestrator for soar-microbench: runs static + MEMTIS-managed configurations,
-appends timings to CSV, plots.
+writes a fresh CSV per invocation, plots.
 
 Subcommands
 -----------
-  run     drive bench, append CSV rows
-  plot    render PNGs from a CSV
+  run     drive bench, write a new CSV (one column per workload, one row per rep)
+  plot    render PNGs from one or more CSVs
   revert  flip dax1.0 back to devdax (booking cleanup)
 
 Examples
@@ -15,13 +15,22 @@ Examples
   sudo python3 microbench.py run all --reps 5 --dram-cap 2GB
   sudo python3 microbench.py run memtis dram
   python3 microbench.py plot                   # newest CSV
-  python3 microbench.py plot results/foo.csv
+  python3 microbench.py plot results/run-a.csv results/run-b.csv
   sudo python3 microbench.py revert
 
-CSV columns
------------
-  timestamp, kernel, workload, rep, iter, buf_a_mb, buf_b_mb,
-  seq_mult, dram_cap, pc_node, seq_node, walltime_s
+CSV format
+----------
+Wide: header is the list of workloads run (e.g. `dram,hot,cold,opt,memtis`),
+each subsequent row is one rep (wall time in seconds per workload).
+
+Filename
+--------
+Default file name encodes the parameters, so the CSV body itself stays
+minimal:
+
+  <host>-<kernel>-i<iter>-A<buf_a>-B<buf_b>-S<seq_mult>-cap<dram_cap>-<YYYYmmddHHMM>.csv
+
+Override with `--csv PATH`.
 """
 
 from __future__ import annotations
@@ -32,7 +41,6 @@ import datetime as dt
 import os
 import platform
 import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -68,6 +76,12 @@ WORKLOAD_LABELS = {
     "memtis": "MEMTIS\nmanaged",
 }
 
+FILENAME_RE = re.compile(
+    r"^(?P<host>[^-]+)-(?P<kernel>.+?)"
+    r"-i(?P<iter>\d+)-A(?P<buf_a>\d+)-B(?P<buf_b>\d+)-S(?P<seq_mult>\d+)"
+    r"-cap(?P<dram_cap>[^-]+)-(?P<date>\d{12})$"
+)
+
 
 # ---------- helpers ----------
 
@@ -77,7 +91,6 @@ def need_root():
 
 
 def sh(cmd, **kw):
-    """Run a command; raise on non-zero by default. Caller may override check."""
     kw.setdefault("check", True)
     return subprocess.run(cmd, **kw)
 
@@ -122,7 +135,6 @@ def expand_workloads(items) -> list[str]:
             out.append(w)
         else:
             sys.exit(f"unknown workload: {w}")
-    # de-dup but keep order
     seen = set()
     return [w for w in out if not (w in seen or seen.add(w))]
 
@@ -147,7 +159,7 @@ def time_run(argv: list[str]) -> float:
 
 def setup_memcg(dram_cap: str):
     sh(["bash", str(SET_MEMCG), "htmm", "remove"], stderr=subprocess.DEVNULL,
-       check=False)  # best-effort
+       check=False)
     sh(["bash", str(SET_MEMCG), "htmm", str(os.getpid()), "enable"])
     sh(["bash", str(SET_MEM_SIZE), "htmm", "0", dram_cap])
 
@@ -159,21 +171,16 @@ def teardown_memcg():
 
 # ---------- CSV ----------
 
-CSV_HEADER = [
-    "timestamp", "kernel", "workload", "rep", "iter",
-    "buf_a_mb", "buf_b_mb", "seq_mult", "dram_cap",
-    "pc_node", "seq_node", "walltime_s",
-]
+def build_csv_name(host: str, kernel: str, args) -> str:
+    when = dt.datetime.now().strftime("%Y%m%d%H%M")
+    return (f"{host}-{kernel}"
+            f"-i{args.iter}-A{args.buf_a}-B{args.buf_b}-S{args.seq_mult}"
+            f"-cap{args.dram_cap}-{when}.csv")
 
 
-def append_row(csv_path: Path, row: dict):
-    new = not csv_path.exists()
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    with csv_path.open("a", newline="") as f:
-        w = csv_mod.DictWriter(f, fieldnames=CSV_HEADER)
-        if new:
-            w.writeheader()
-        w.writerow(row)
+def parse_filename(stem: str) -> dict | None:
+    m = FILENAME_RE.match(stem)
+    return m.groupdict() if m else None
 
 
 # ---------- subcommands ----------
@@ -182,13 +189,18 @@ def cmd_run(args):
     need_root()
     workloads = expand_workloads(args.workloads)
 
+    host = socket.gethostname()
+    kernel = platform.release()
     csv_path = (Path(args.csv) if args.csv
-                else RESULTS / f"{socket.gethostname()}-{platform.release()}.csv")
+                else RESULTS / build_csv_name(host, kernel, args))
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"CSV -> {csv_path}")
 
     ensure_dax_system_ram()
 
-    kernel = platform.release()
+    # workload -> list[float], filled in workload-major order
+    results: dict[str, list[float]] = {w: [] for w in workloads}
+
     for w in workloads:
         if w == "memtis":
             setup_memcg(args.dram_cap)
@@ -198,32 +210,43 @@ def cmd_run(args):
                 argv = bench_argv(w, args.iter, args.buf_a, args.buf_b,
                                   args.seq_mult)
                 t = time_run(argv)
-                pc, seqn = (-1, -1) if w == "memtis" else STATIC_PLACEMENT[w]
-                cap = args.dram_cap if w == "memtis" else "-"
-                row = {
-                    "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
-                    "kernel": kernel, "workload": w, "rep": rep,
-                    "iter": args.iter, "buf_a_mb": args.buf_a,
-                    "buf_b_mb": args.buf_b, "seq_mult": args.seq_mult,
-                    "dram_cap": cap, "pc_node": pc, "seq_node": seqn,
-                    "walltime_s": f"{t:.6f}",
-                }
-                append_row(csv_path, row)
+                results[w].append(t)
                 print(f"  {w} rep {rep}/{args.reps}: {t:.3f} s")
+                # flush partial CSV every rep to survive crashes
+                write_csv(csv_path, workloads, results, args.reps)
         finally:
             if w == "memtis":
                 teardown_memcg()
                 time.sleep(1)
 
-    print(f"\ndone. rows appended to {csv_path}")
+    print(f"\ndone -> {csv_path}")
     if args.plot:
-        plot_csv(csv_path, args.out_dir or RESULTS, show=False)
+        plot_csvs([csv_path], args.out_dir or RESULTS, show=False)
+
+
+def write_csv(path: Path, workloads: list[str],
+              results: dict[str, list[float]], reps: int):
+    """Wide CSV: one column per workload, one row per rep. Missing cells blank."""
+    with path.open("w", newline="") as f:
+        w = csv_mod.writer(f)
+        w.writerow(workloads)
+        for rep in range(reps):
+            row = []
+            for wk in workloads:
+                if rep < len(results[wk]):
+                    row.append(f"{results[wk][rep]:.6f}")
+                else:
+                    row.append("")
+            # skip all-empty rows (nothing measured yet for this rep)
+            if any(c != "" for c in row):
+                w.writerow(row)
 
 
 def cmd_plot(args):
-    csv_path = Path(args.csv) if args.csv else newest_csv(RESULTS)
+    csvs = ([Path(p) for p in args.csv] if args.csv
+            else [newest_csv(RESULTS)])
     out_dir = Path(args.out_dir) if args.out_dir else RESULTS
-    plot_csv(csv_path, out_dir, show=args.show)
+    plot_csvs(csvs, out_dir, show=args.show)
 
 
 def cmd_revert(args):
@@ -240,54 +263,82 @@ def newest_csv(d: Path) -> Path:
 
 # ---------- plotting ----------
 
-def plot_csv(csv_path: Path, out_dir: Path, show=False):
+def plot_csvs(csv_paths: list[Path], out_dir: Path, show=False):
     import pandas as pd
     import matplotlib.pyplot as plt
 
-    df = pd.read_csv(csv_path)
-    df = df[df["walltime_s"].notna() & (df["walltime_s"] > 0)]
-    if df.empty:
-        sys.exit(f"no usable rows in {csv_path}")
+    rows = []        # long-format median+min+max per (group_label, workload)
+    for csv_path in csv_paths:
+        meta = parse_filename(csv_path.stem) or {}
+        label = meta.get("kernel", csv_path.stem)
+        cap = meta.get("dram_cap")
+        if cap:
+            label += f" (cap {cap})"
+        df = pd.read_csv(csv_path)
+        for wk in df.columns:
+            col = pd.to_numeric(df[wk], errors="coerce").dropna()
+            if col.empty:
+                continue
+            rows.append({
+                "label": label, "workload": wk,
+                "median": col.median(),
+                "min": col.min(), "max": col.max(),
+                "n": len(col),
+            })
+    if not rows:
+        sys.exit("no numeric data found in CSVs")
+    agg = pd.DataFrame(rows)
 
-    agg = (df.groupby(["kernel", "workload"], as_index=False)
-             .agg(walltime_s=("walltime_s", "median"),
-                  n=("walltime_s", "size")))
-
+    # relative perf = t_dram / t_x, computed within each label
     rel = []
-    for kernel, sub in agg.groupby("kernel"):
+    for label, sub in agg.groupby("label"):
         base = sub[sub.workload == "dram"]
         if base.empty:
             continue
-        sub = sub.assign(rel_perf=base.iloc[0].walltime_s / sub["walltime_s"])
+        b = base.iloc[0]["median"]
+        sub = sub.assign(rel_perf=b / sub["median"])
         rel.append(sub)
-    agg_rel = pd.concat(rel) if rel else agg
+    agg_rel = (pd.concat(rel) if rel else agg)
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = csv_path.stem
-    _bar(agg, "walltime_s", "wall time (s)",
-         f"soar-microbench wall time — {stem}",
-         out_dir / f"{stem}.walltime.png")
+    out_stem = (csv_paths[0].stem if len(csv_paths) == 1
+                else f"combined-{dt.datetime.now():%Y%m%d%H%M}")
+
+    _bar(agg, "median", "wall time (s)",
+         f"soar-microbench wall time — {out_stem}",
+         out_dir / f"{out_stem}.walltime.png",
+         err_lo="min", err_hi="max")
     if "rel_perf" in agg_rel.columns:
         _bar(agg_rel, "rel_perf", "relative perf (t_dram / t_x)",
-             f"normalized perf vs All-DRAM — {stem}",
-             out_dir / f"{stem}.relperf.png")
+             f"normalized perf vs All-DRAM — {out_stem}",
+             out_dir / f"{out_stem}.relperf.png")
     if show:
         plt.show()
 
 
-def _bar(agg, value_col, ylabel, title, out_path):
+def _bar(agg, value_col, ylabel, title, out_path,
+         err_lo: str | None = None, err_hi: str | None = None):
     import matplotlib.pyplot as plt
-    kernels = sorted(agg["kernel"].unique())
+    labels = sorted(agg["label"].unique())
     workloads = [w for w in WORKLOADS if w in agg["workload"].unique()]
     x = list(range(len(workloads)))
-    width = 0.8 / max(len(kernels), 1)
+    width = 0.8 / max(len(labels), 1)
 
     fig, ax = plt.subplots(figsize=(max(7, 1.5 * len(workloads)), 5))
-    for i, k in enumerate(kernels):
-        sub = agg[agg.kernel == k].set_index("workload")
+    for i, lab in enumerate(labels):
+        sub = agg[agg.label == lab].set_index("workload")
         vals = [sub.loc[w, value_col] if w in sub.index else 0 for w in workloads]
-        offset = (i - (len(kernels) - 1) / 2) * width
-        bars = ax.bar([xi + offset for xi in x], vals, width, label=k)
+        if err_lo and err_hi:
+            lows  = [vals[j] - sub.loc[w, err_lo] if w in sub.index else 0
+                     for j, w in enumerate(workloads)]
+            highs = [sub.loc[w, err_hi] - vals[j] if w in sub.index else 0
+                     for j, w in enumerate(workloads)]
+            yerr = [lows, highs]
+        else:
+            yerr = None
+        offset = (i - (len(labels) - 1) / 2) * width
+        bars = ax.bar([xi + offset for xi in x], vals, width, label=lab,
+                      yerr=yerr, capsize=3)
         for b, v in zip(bars, vals):
             if v > 0:
                 ax.annotate(f"{v:.2f}", (b.get_x() + b.get_width() / 2, v),
@@ -296,7 +347,7 @@ def _bar(agg, value_col, ylabel, title, out_path):
     ax.set_xticklabels([WORKLOAD_LABELS.get(w, w) for w in workloads])
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.legend(title="kernel", loc="best")
+    ax.legend(loc="best", fontsize=8)
     ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
@@ -311,24 +362,23 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pr = sub.add_parser("run", help="execute workloads, append CSV")
+    pr = sub.add_parser("run", help="execute workloads, write a fresh CSV")
     pr.add_argument("workloads", nargs="+",
                     help=f"any of {WORKLOADS + list(ALIASES)}")
     pr.add_argument("--reps", type=int, default=1)
-    pr.add_argument("--iter", type=int, default=5,
-                    help="-i passed to bench")
+    pr.add_argument("--iter", type=int, default=5)
     pr.add_argument("--buf-a", type=int, default=2048, help="MB")
     pr.add_argument("--buf-b", type=int, default=2048, help="MB")
     pr.add_argument("--seq-mult", type=int, default=46)
     pr.add_argument("--dram-cap", default="3GB",
                     help="cgroup DRAM cap for memtis runs")
-    pr.add_argument("--csv", help="output CSV path (default: results/<host>-<kernel>.csv)")
-    pr.add_argument("--plot", action="store_true", help="render PNGs after run")
+    pr.add_argument("--csv", help="CSV path (default encodes params + date)")
+    pr.add_argument("--plot", action="store_true", help="plot after the run")
     pr.add_argument("--out-dir", help="plot output dir")
     pr.set_defaults(func=cmd_run)
 
-    pp = sub.add_parser("plot", help="render PNGs from CSV")
-    pp.add_argument("csv", nargs="?", help="(default: newest under results/)")
+    pp = sub.add_parser("plot", help="render PNGs from CSVs")
+    pp.add_argument("csv", nargs="*", help="(default: newest under results/)")
     pp.add_argument("--out-dir")
     pp.add_argument("--show", action="store_true")
     pp.set_defaults(func=cmd_plot)
