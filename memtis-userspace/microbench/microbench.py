@@ -77,8 +77,9 @@ def need_root():
 
 
 def sh(cmd, **kw):
-    """Run a command; raise on non-zero. Inherits stdout/stderr by default."""
-    return subprocess.run(cmd, check=True, **kw)
+    """Run a command; raise on non-zero by default. Caller may override check."""
+    kw.setdefault("check", True)
+    return subprocess.run(cmd, **kw)
 
 
 def sh_out(cmd) -> str:
