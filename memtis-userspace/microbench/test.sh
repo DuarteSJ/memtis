@@ -56,13 +56,13 @@ walltime() {
     echo "$t1 - $t0" | bc -l
 }
 
-run_dram()  { echo -e "All DRAM: ";                    walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 0 -S $SEQ_MULT; }
-run_hot()   { echo -e "pchase Optane, seq DRAM: ";     walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 0 -S $SEQ_MULT; }
-run_cold()  { echo -e "pchase DRAM, seq Optane: ";     walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 2 -S $SEQ_MULT; }
-run_opt()   { echo -e "All Optane: ";                  walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 2 -S $SEQ_MULT; }
+run_dram()  { printf "All DRAM: ";                    walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 0 -S $SEQ_MULT; }
+run_hot()   { printf "pchase Optane, seq DRAM: ";     walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 0 -S $SEQ_MULT; }
+run_cold()  { printf "pchase DRAM, seq Optane: ";     walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 0 -N 2 -S $SEQ_MULT; }
+run_opt()   { printf "All Optane: ";                  walltime $BENCH -R 0.5 -i $ITER -A $BUF_A -B $BUF_B -r 2 -N 2 -S $SEQ_MULT; }
 
 run_memtis() {
-    echo -e "\n===MEMTIS managed (DRAM cap $DRAM_CAP, both unbound)===\n"
+    printf "\n===MEMTIS managed (DRAM cap %s, both unbound)===\n\n" "$DRAM_CAP"
 
     $SCRIPTS/set_htmm_memcg.sh htmm remove 2>/dev/null
     $SCRIPTS/set_htmm_memcg.sh htmm $$ enable
