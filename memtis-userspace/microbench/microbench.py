@@ -24,6 +24,8 @@ CSV columns
   seq_mult, dram_cap, pc_node, seq_node, walltime_s
 """
 
+from __future__ import annotations
+
 import argparse
 import csv as csv_mod
 import datetime as dt
