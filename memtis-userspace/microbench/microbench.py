@@ -166,6 +166,11 @@ def setup_memcg(dram_cap: str):
 
 def teardown_memcg():
     sh(["bash", str(SET_MEMCG), "htmm", str(os.getpid()), "disable"])
+    # move self back to root cgroup so the htmm cgroup is empty -> rmdir succeeds
+    try:
+        Path("/sys/fs/cgroup/cgroup.procs").write_text(f"{os.getpid()}\n")
+    except OSError as e:
+        print(f"warn: could not move self to root cgroup: {e}", file=sys.stderr)
     sh(["bash", str(SET_MEMCG), "htmm", "remove"])
 
 
