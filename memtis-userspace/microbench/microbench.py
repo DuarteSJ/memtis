@@ -102,6 +102,25 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
 
+_SUDO_UID = os.environ.get("SUDO_UID")
+_SUDO_GID = os.environ.get("SUDO_GID")
+
+
+def drop_ownership(path: Path):
+    """If we're root via sudo, chown path (and contents if dir) back to the user."""
+    if not (_SUDO_UID and _SUDO_GID and os.geteuid() == 0):
+        return
+    uid, gid = int(_SUDO_UID), int(_SUDO_GID)
+    targets = [path]
+    if path.is_dir():
+        targets.extend(path.rglob("*"))
+    for p in targets:
+        try:
+            os.chown(p, uid, gid)
+        except OSError as e:
+            print(f"warn: chown {p}: {e}", file=sys.stderr)
+
+
 def sh_out(cmd) -> str:
     return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
 
@@ -240,6 +259,7 @@ def cmd_run(args):
         run_dir = RESULTS / stem
         csv_path = run_dir / f"{stem}.csv"
     run_dir.mkdir(parents=True, exist_ok=True)
+    drop_ownership(run_dir)
     print(f"run dir -> {run_dir}")
     print(f"CSV     -> {csv_path}")
 
@@ -292,6 +312,7 @@ def write_csv(path: Path, workloads: list[str],
             # skip all-empty rows (nothing measured yet for this rep)
             if any(c != "" for c in row):
                 w.writerow(row)
+    drop_ownership(path)
 
 
 def cmd_plot(args):
@@ -374,6 +395,7 @@ def plot_csvs(csv_paths: list[Path], out_dir: Path, show=False):
     agg_rel = (pd.concat(rel) if rel else agg)
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    drop_ownership(out_dir)
     out_stem = (csv_paths[0].stem if len(csv_paths) == 1
                 else f"combined-{dt.datetime.now():%Y%m%d%H%M}")
 
@@ -424,6 +446,7 @@ def _bar(agg, value_col, ylabel, title, out_path,
     ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
+    drop_ownership(out_path)
     print(f"wrote {out_path}")
 
 
