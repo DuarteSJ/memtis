@@ -23,14 +23,21 @@ CSV format
 Wide: header is the list of workloads run (e.g. `dram,hot,cold,opt,memtis`),
 each subsequent row is one rep (wall time in seconds per workload).
 
-Filename
---------
-Default file name encodes the parameters, so the CSV body itself stays
-minimal:
+Run directory
+-------------
+Each `run` creates a fresh folder under results/, named to encode all
+parameters + the timestamp:
 
-  <host>-<kernel>-i<iter>-A<buf_a>-B<buf_b>-S<seq_mult>-cap<dram_cap>-<YYYYmmddHHMM>.csv
+  results/<host>-<kernel>-i<iter>-A<buf_a>-B<buf_b>-S<seq_mult>-cap<dram_cap>-<YYYYmmddHHMM>/
 
-Override with `--csv PATH`.
+Inside the folder:
+  <stem>.csv               wide CSV (one column per workload)
+  <stem>.walltime.png      bar chart of wall times              (if --plot)
+  <stem>.relperf.png       normalized t_dram / t_x              (if --plot)
+
+`plot` accepts either CSV file paths or run-directory paths. Multi-CSV
+plots are dropped under results/combined-<YYYYmmddHHMM>/ unless
+--out-dir is given.
 """
 
 from __future__ import annotations
@@ -117,6 +124,35 @@ def ensure_dax_system_ram():
     sh(["daxctl", "reconfigure-device", "dax1.0", "--mode=system-ram"])
 
 
+NUMA_BAL_PATH = Path("/proc/sys/kernel/numa_balancing")
+
+
+def disable_autonuma() -> str | None:
+    """Set numa_balancing=0, return prior value (str) so caller can restore."""
+    try:
+        prev = NUMA_BAL_PATH.read_text().strip()
+    except OSError as e:
+        print(f"warn: cannot read numa_balancing: {e}", file=sys.stderr)
+        return None
+    if prev == "0":
+        print("numa_balancing already 0")
+        return prev
+    print(f"numa_balancing was {prev}; setting 0 for the run")
+    NUMA_BAL_PATH.write_text("0")
+    return prev
+
+
+def restore_autonuma(prev: str | None):
+    if prev is None or prev == "0":
+        return
+    try:
+        NUMA_BAL_PATH.write_text(prev)
+        print(f"numa_balancing restored to {prev}")
+    except OSError as e:
+        print(f"warn: could not restore numa_balancing to {prev}: {e}",
+              file=sys.stderr)
+
+
 def revert_dax_devdax():
     mode = dax_mode()
     if mode == "devdax":
@@ -176,11 +212,11 @@ def teardown_memcg():
 
 # ---------- CSV ----------
 
-def build_csv_name(host: str, kernel: str, args) -> str:
+def build_run_stem(host: str, kernel: str, args) -> str:
     when = dt.datetime.now().strftime("%Y%m%d%H%M")
     return (f"{host}-{kernel}"
             f"-i{args.iter}-A{args.buf_a}-B{args.buf_b}-S{args.seq_mult}"
-            f"-cap{args.dram_cap}-{when}.csv")
+            f"-cap{args.dram_cap}-{when}")
 
 
 def parse_filename(stem: str) -> dict | None:
@@ -196,37 +232,48 @@ def cmd_run(args):
 
     host = socket.gethostname()
     kernel = platform.release()
-    csv_path = (Path(args.csv) if args.csv
-                else RESULTS / build_csv_name(host, kernel, args))
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"CSV -> {csv_path}")
+    if args.csv:
+        csv_path = Path(args.csv)
+        run_dir = csv_path.parent
+    else:
+        stem = build_run_stem(host, kernel, args)
+        run_dir = RESULTS / stem
+        csv_path = run_dir / f"{stem}.csv"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"run dir -> {run_dir}")
+    print(f"CSV     -> {csv_path}")
 
     ensure_dax_system_ram()
+    prev_autonuma = disable_autonuma()
 
     # workload -> list[float], filled in workload-major order
     results: dict[str, list[float]] = {w: [] for w in workloads}
 
-    for w in workloads:
-        if w == "memtis":
-            setup_memcg(args.dram_cap)
-            time.sleep(2)
-        try:
-            for rep in range(1, args.reps + 1):
-                argv = bench_argv(w, args.iter, args.buf_a, args.buf_b,
-                                  args.seq_mult)
-                t = time_run(argv)
-                results[w].append(t)
-                print(f"  {w} rep {rep}/{args.reps}: {t:.3f} s")
-                # flush partial CSV every rep to survive crashes
-                write_csv(csv_path, workloads, results, args.reps)
-        finally:
+    try:
+        for w in workloads:
             if w == "memtis":
-                teardown_memcg()
-                time.sleep(1)
+                setup_memcg(args.dram_cap)
+                time.sleep(2)
+            try:
+                for rep in range(1, args.reps + 1):
+                    argv = bench_argv(w, args.iter, args.buf_a, args.buf_b,
+                                      args.seq_mult)
+                    t = time_run(argv)
+                    results[w].append(t)
+                    print(f"  {w} rep {rep}/{args.reps}: {t:.3f} s")
+                    # flush partial CSV every rep to survive crashes
+                    write_csv(csv_path, workloads, results, args.reps)
+            finally:
+                if w == "memtis":
+                    teardown_memcg()
+                    time.sleep(1)
+    finally:
+        restore_autonuma(prev_autonuma)
 
     print(f"\ndone -> {csv_path}")
     if args.plot:
-        plot_csvs([csv_path], args.out_dir or RESULTS, show=False)
+        plot_csvs([csv_path], Path(args.out_dir) if args.out_dir else run_dir,
+                  show=False)
 
 
 def write_csv(path: Path, workloads: list[str],
@@ -248,10 +295,31 @@ def write_csv(path: Path, workloads: list[str],
 
 
 def cmd_plot(args):
-    csvs = ([Path(p) for p in args.csv] if args.csv
-            else [newest_csv(RESULTS)])
-    out_dir = Path(args.out_dir) if args.out_dir else RESULTS
+    if args.csv:
+        csvs = [resolve_csv(Path(p)) for p in args.csv]
+    else:
+        csvs = [newest_csv(RESULTS)]
+    if args.out_dir:
+        out_dir = Path(args.out_dir)
+    elif len(csvs) == 1:
+        # single CSV -> drop PNGs next to it (its run dir)
+        out_dir = csvs[0].parent
+    else:
+        # multi-CSV combined plot -> put under results/combined-<date>/
+        out_dir = RESULTS / f"combined-{dt.datetime.now():%Y%m%d%H%M}"
     plot_csvs(csvs, out_dir, show=args.show)
+
+
+def resolve_csv(p: Path) -> Path:
+    """Accept either a CSV file or a run directory containing one."""
+    if p.is_dir():
+        cands = list(p.glob("*.csv"))
+        if not cands:
+            sys.exit(f"no CSV in {p}")
+        if len(cands) > 1:
+            sys.exit(f"multiple CSVs in {p}; pass an explicit one")
+        return cands[0]
+    return p
 
 
 def cmd_revert(args):
@@ -260,7 +328,7 @@ def cmd_revert(args):
 
 
 def newest_csv(d: Path) -> Path:
-    csvs = sorted(d.glob("*.csv"), key=lambda p: p.stat().st_mtime)
+    csvs = sorted(d.rglob("*.csv"), key=lambda p: p.stat().st_mtime)
     if not csvs:
         sys.exit(f"no CSV under {d}")
     return csvs[-1]
