@@ -1,3 +1,0 @@
-soar-microbench/src/bench
-soar-microbench/src/*.o
-*.csv
