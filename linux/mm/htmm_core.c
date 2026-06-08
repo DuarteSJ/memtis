@@ -20,13 +20,12 @@
 #include "internal.h"
 #include <asm/pgtable.h>
 
-/* SOAR/ALTO K = 1/(a + b/AOL). Both stored scaled by AOL_SCALE so
- * fractional values survive. Hardware-dependent — recalibrate via
- * memtis-userspace/microbench/calibrate-soar.sh on the target box.
- * Values below were fit on nvram (Xeon Gold 5218, slow tier = NUMA node 2):
- *   a = 0.0625, b = 1.2801 -> A_SCALED=64, B_SCALED=1311 */
-#define AOL_PARAM_A_SCALED 64
-#define AOL_PARAM_B_SCALED 1311
+/* SOAR/ALTO K = 1/(a + b/AOL). a, b are stored scaled by AOL_SCALE (so
+ * fractional values survive) and are live-tunable at runtime via
+ *   /sys/kernel/mm/htmm/htmm_aol_param_a
+ *   /sys/kernel/mm/htmm/htmm_aol_param_b
+ * (vars defined in mm/mempolicy.c). Hardware-dependent.
+ * Use membench/calibrate, then write the scaled values to the sysfs knobs. */
 
 static unsigned long aol_weight_cached = AOL_SCALE;
 
@@ -51,8 +50,10 @@ void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
      * weight= 1 + S            SCALE + pk
      */
     u64 aol, k, k_den, p, pk;
+    unsigned int a = READ_ONCE(htmm_aol_param_a);
+    unsigned int b = READ_ONCE(htmm_aol_param_b);
 
-    if (c == 0 || a3 == 0 || (AOL_PARAM_A_SCALED == 0 && AOL_PARAM_B_SCALED == 0)) {
+    if (c == 0 || a3 == 0 || (a == 0 && b == 0)) {
         set_current_aol_weight(AOL_SCALE);
         return;
     }
@@ -62,7 +63,7 @@ void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
     aol = mul_u64_u64_div_u64(a1, AOL_SCALE, a3);
     if (aol == 0) aol = 1;
 
-    k_den = AOL_PARAM_A_SCALED + mul_u64_u64_div_u64(AOL_PARAM_B_SCALED, AOL_SCALE, aol);
+    k_den = a + mul_u64_u64_div_u64(b, AOL_SCALE, aol);
 
     k = mul_u64_u64_div_u64(AOL_SCALE, AOL_SCALE, k_den);
 
