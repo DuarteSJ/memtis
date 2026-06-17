@@ -109,8 +109,8 @@ enum events {
 };
 
 /* htmm_core.c */
-extern unsigned long get_current_aol_weight(void);
-extern void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c);
+extern unsigned long get_current_aol_weight(int cpu);
+extern void update_aol_counters(int cpu, u64 a1, u64 a3, u64 s_llc, u64 c);
 
 extern void htmm_mm_init(struct mm_struct *mm);
 extern void htmm_mm_exit(struct mm_struct *mm);

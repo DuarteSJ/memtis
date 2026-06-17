@@ -18,7 +18,9 @@ struct task_struct *access_sampling = NULL;
  * CPU id and sized to nr_cpu_ids. Entries outside the htmm cpumask stay NULL. */
 struct perf_event ***mem_event;
 static struct perf_event ***aol_events; /* per cpu: {A1, A3, s_LLC, c} */
-static u64 aols_last_a1, aols_last_a3, aols_last_s_llc, aols_last_c;
+/* Per CPU counters, so each core's delta is computed against its own last window.
+ * Indexed [counter] as {A1, A3, s_LLC, c}. */
+static DEFINE_PER_CPU(u64[N_HTMMCOUNTERS], aols_last);
 
 static bool valid_va(unsigned long addr)
 {
@@ -167,37 +169,41 @@ static int aol_counters_init(void)
 
 static void aol_read_and_update(void)
 {
-    u64 a1 = 0, a3 = 0, s_llc = 0, c = 0;
-    u64 *sums[N_HTMMCOUNTERS] = { &a1, &a3, &s_llc, &c };
     u64 en, ru;
     int cpu, i;
 
     if (!aol_events)
         return;
+
     for_each_htmm_cpu(cpu) {
+        u64 raw[N_HTMMCOUNTERS];
+        u64 *last = per_cpu(aols_last, cpu);
+        bool ok = true;
+
         if (!aol_events[cpu])
             continue;
         for (i = 0; i < N_HTMMCOUNTERS; i++) {
-            u64 val;
-
-            if (!aol_events[cpu][i])
-                continue;
-            val = perf_event_read_value(aol_events[cpu][i], &en, &ru);
+            if (!aol_events[cpu][i]) {
+                ok = false;
+                break;
+            }
+            raw[i] = perf_event_read_value(aol_events[cpu][i], &en, &ru);
             /* counter was enabled but never actually ran in this window: result is untrustworthy */
             if (en && !ru) {
-                printk_ratelimited("aol_read_and_update: counter %d on cpu %d not running (en=%llu ru=%llu); skipping update\n",
+                printk_ratelimited("aol_read_and_update: counter %d on cpu %d not running (en=%llu ru=%llu); skipping cpu\n",
                                    i, cpu, en, ru);
-                return;
+                ok = false;
+                break;
             }
-            *sums[i] += val;
         }
-    }
+        if (!ok)
+            continue;
 
-    update_aol_counters(a1 - aols_last_a1, a3 - aols_last_a3, s_llc - aols_last_s_llc, c - aols_last_c);
-    aols_last_a1    = a1;
-    aols_last_a3    = a3;
-    aols_last_s_llc = s_llc;
-    aols_last_c     = c;
+        update_aol_counters(cpu, raw[0] - last[0], raw[1] - last[1],
+                            raw[2] - last[2], raw[3] - last[3]);
+        for (i = 0; i < N_HTMMCOUNTERS; i++)
+            last[i] = raw[i];
+    }
 }
 
 static int pebs_init(pid_t pid, int node)
@@ -322,7 +328,6 @@ static int ksamplingd(void *data)
 
     /* for analytic purpose */
     unsigned long hr_dram = 0, hr_nvm = 0;
-    unsigned long aol_weight = get_current_aol_weight();
 
     /* orig impl: see read_sum_exec_runtime() */
     trace_runtime = total_runtime = exec_runtime = t->se.sum_exec_runtime;
@@ -403,7 +408,9 @@ static int ksamplingd(void *data)
 				break;
 			    }
 
-			    update_pginfo(he->pid, he->addr, event, aol_weight);
+			    /* weight by the AOL of the core that took this sample */
+			    update_pginfo(he->pid, he->addr, event,
+					  get_current_aol_weight(cpu));
 			    //count_vm_event(HTMM_NR_SAMPLED);
 			    nr_sampled++;
 
@@ -453,7 +460,6 @@ static int ksamplingd(void *data)
 	cur = jiffies;
     if ((cur - last_aol_update) >= aol_period) {
         aol_read_and_update();
-        aol_weight = get_current_aol_weight();
         last_aol_update = cur;
     }
 	if ((cur - elapsed_cputime) >= cpucap_period) {

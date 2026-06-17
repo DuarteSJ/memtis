@@ -27,19 +27,19 @@
  * (vars defined in mm/mempolicy.c). Hardware-dependent.
  * Use membench/calibrate, then write the scaled values to the sysfs knobs. */
 
-static unsigned long aol_weight_cached = AOL_SCALE;
+static DEFINE_PER_CPU(unsigned long, aol_weight_cached) = AOL_SCALE;
 
-unsigned long get_current_aol_weight(void)
+unsigned long get_current_aol_weight(int cpu)
 {
-    return READ_ONCE(aol_weight_cached);
+    return READ_ONCE(per_cpu(aol_weight_cached, cpu));
 }
 
-static void set_current_aol_weight(unsigned long weight)
+static void set_current_aol_weight(int cpu, unsigned long weight)
 {
-    WRITE_ONCE(aol_weight_cached, weight);
+    WRITE_ONCE(per_cpu(aol_weight_cached, cpu), weight);
 }
 
-void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
+void update_aol_counters(int cpu, u64 a1, u64 a3, u64 s_llc, u64 c)
 {
     /* All quantities below are stored in AOL_SCALE fixed point.
      * P     = s_LLC / c        p     = s_LLC * SCALE / c
@@ -54,7 +54,7 @@ void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
     unsigned int b = READ_ONCE(htmm_aol_param_b);
 
     if (c == 0 || a3 == 0 || (a == 0 && b == 0)) {
-        set_current_aol_weight(AOL_SCALE);
+        set_current_aol_weight(cpu, AOL_SCALE);
         return;
     }
 
@@ -69,11 +69,11 @@ void update_aol_counters(u64 a1, u64 a3, u64 s_llc, u64 c)
 
     pk = mul_u64_u64_div_u64(p, k, AOL_SCALE);
 
-    set_current_aol_weight(pk + AOL_SCALE);
+    set_current_aol_weight(cpu, pk + AOL_SCALE);
 
     printk_ratelimited(
-        "htmm_aol: a1=%llu a3=%llu s_llc=%llu c=%llu aol=%llu p=%llu k=%llu s=%llu weight=%llu\n",
-        a1, a3, s_llc, c, aol, p, k, pk, pk + AOL_SCALE);
+        "htmm_aol: cpu=%d a1=%llu a3=%llu s_llc=%llu c=%llu aol=%llu p=%llu k=%llu s=%llu weight=%llu\n",
+        cpu, a1, a3, s_llc, c, aol, p, k, pk, pk + AOL_SCALE);
 }
 
 void htmm_mm_init(struct mm_struct *mm)
