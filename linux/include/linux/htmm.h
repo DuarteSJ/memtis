@@ -25,8 +25,8 @@
 #define N_HTMMCOUNTERS 4 /* A1, A3, s_LLC, c */
 #define CYCLE_ACTIVITY_STALLS_L3_MISS   0x060006a3 /* ev=0xA3, umask=0x06, cmask=6: LLC stall cycles */
 #define CPU_CLK_UNHALTED_THREAD         0x0000003c /* ev=0x3C, umask=0x00: thread cycles */
-#define ORO_CYCLES_WITH_DEMAND_DATA_RD  0x010001b1 /* ev=0xB1, umask=0x01, cmask=1: cycles w/ pending demand reads (A1) */
-#define ORO_DEMAND_DATA_RD              0x000001b1 /* ev=0xB1, umask=0x01: outstanding demand reads per cycle (A2, unused) */
+#define ORO_CYCLES_WITH_DEMAND_DATA_RD  0x01000160 /* ev=0x60, umask=0x01, cmask=1: cycles w/ pending demand reads (A1) */
+#define ORO_DEMAND_DATA_RD              0x00000160 /* ev=0x60, umask=0x01: outstanding demand reads per cycle (A2, unused) */
 #define OFFCORE_REQUESTS_DEMAND_DATA_RD 0x000001b0 /* ev=0xB0, umask=0x01: # demand read requests (A3) */
 
 /* AOL-weighted hotness: fixed-point scale used for aol_weight and
