@@ -607,6 +607,12 @@ struct mm_struct {
 
 #ifdef CONFIG_HTMM
 		bool htmm_enabled;
+		/* Soar-supplied per-object weights: interval tree of
+		 * [start, last] virtual address ranges -> aol_weight.
+		 * Populated via the /dev/memtis ioctl; consulted per PEBS
+		 * sample in update_pginfo. */
+		struct rb_root_cached htmm_weight_tree;
+		spinlock_t htmm_weight_lock;
 #endif
 	} __randomize_layout;
 

@@ -900,6 +900,7 @@ config SECRETMEM
 config HTMM
 	bool "Enable hugepage-aware tiered memory management"
 	depends on MIGRATION && TRANSPARENT_HUGEPAGE && MEMCG
+	select INTERVAL_TREE
 	help
 	  Enable memory access sampling and dynamic placement for
 	  tiered memory systems (DRAM + NVM). This optimizes the system

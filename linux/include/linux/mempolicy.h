@@ -190,8 +190,6 @@ extern unsigned int htmm_sample_period;
 extern unsigned int htmm_inst_sample_period;
 extern unsigned int htmm_split_period;
 extern unsigned int htmm_thres_hot;
-extern unsigned int htmm_aol_param_a;
-extern unsigned int htmm_aol_param_b;
 extern unsigned int htmm_cooling_period;
 extern unsigned int htmm_adaptation_period;
 extern unsigned int ksampled_min_sample_ratio;

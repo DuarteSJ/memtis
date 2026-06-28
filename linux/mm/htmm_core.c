@@ -20,65 +20,14 @@
 #include "internal.h"
 #include <asm/pgtable.h>
 
-/* SOAR/ALTO K = 1/(a + b/AOL). a, b are stored scaled by AOL_SCALE (so
- * fractional values survive) and are live-tunable at runtime via
- *   /sys/kernel/mm/htmm/htmm_aol_param_a
- *   /sys/kernel/mm/htmm/htmm_aol_param_b
- * (vars defined in mm/mempolicy.c). Hardware-dependent.
- * Use membench/calibrate, then write the scaled values to the sysfs knobs. */
-
-static DEFINE_PER_CPU(unsigned long, aol_weight_cached) = AOL_SCALE;
-
-unsigned long get_current_aol_weight(int cpu)
-{
-    return READ_ONCE(per_cpu(aol_weight_cached, cpu));
-}
-
-static void set_current_aol_weight(int cpu, unsigned long weight)
-{
-    WRITE_ONCE(per_cpu(aol_weight_cached, cpu), weight);
-}
-
-void update_aol_counters(int cpu, u64 a1, u64 a3, u64 s_llc, u64 c)
-{
-    /* All quantities below are stored in AOL_SCALE fixed point.
-     * P     = s_LLC / c        p     = s_LLC * SCALE / c
-     * AOL   = A1 / A3          aol   = A1 * SCALE / A3
-     * K_den = a + b / AOL      k_den = a_scaled + (b_scaled * SCALE) / aol
-     * K     = 1 / K_den        k     = SCALE^2 / k_den
-     * S     = P * K            pk    = p * k / SCALE
-     * weight= 1 + S            SCALE + pk
-     */
-    u64 aol, k, k_den, p, pk;
-    unsigned int a = READ_ONCE(htmm_aol_param_a);
-    unsigned int b = READ_ONCE(htmm_aol_param_b);
-
-    if (c == 0 || a3 == 0 || (a == 0 && b == 0)) {
-        set_current_aol_weight(cpu, AOL_SCALE);
-        return;
-    }
-
-    p = mul_u64_u64_div_u64(s_llc, AOL_SCALE, c);
-
-    aol = mul_u64_u64_div_u64(a1, AOL_SCALE, a3);
-    if (aol == 0) aol = 1;
-
-    k_den = a + mul_u64_u64_div_u64(b, AOL_SCALE, aol);
-
-    k = mul_u64_u64_div_u64(AOL_SCALE, AOL_SCALE, k_den);
-
-    pk = mul_u64_u64_div_u64(p, k, AOL_SCALE);
-
-    set_current_aol_weight(cpu, pk + AOL_SCALE);
-
-    printk_ratelimited(
-        "htmm_aol: cpu=%d a1=%llu a3=%llu s_llc=%llu c=%llu aol=%llu p=%llu k=%llu s=%llu weight=%llu\n",
-        cpu, a1, a3, s_llc, c, aol, p, k, pk, pk + AOL_SCALE);
-}
-
 void htmm_mm_init(struct mm_struct *mm)
 {
     struct mem_cgroup *memcg = get_mem_cgroup_from_mm(mm);
+
+    /* always init: the Soar weight tree is consulted regardless of whether
+     * this mm's memcg has htmm enabled yet, and must be valid before any
+     * /dev/memtis ioctl can touch it. */
+    htmm_weight_tree_init(mm);
 
     if (!memcg || !memcg->htmm_enabled) {
 	mm->htmm_enabled = false;
@@ -89,7 +38,11 @@ void htmm_mm_init(struct mm_struct *mm)
 
 void htmm_mm_exit(struct mm_struct *mm)
 {
-    struct mem_cgroup *memcg = get_mem_cgroup_from_mm(mm);
+    struct mem_cgroup *memcg;
+
+    htmm_weight_tree_free(mm);
+
+    memcg = get_mem_cgroup_from_mm(mm);
     if (!memcg)
 	return;
     /* do nothing */
@@ -1433,7 +1386,16 @@ void update_pginfo(pid_t pid, unsigned long address, enum events e, unsigned lon
     memcg = get_mem_cgroup_from_mm(mm);
     if (!memcg || !memcg->htmm_enabled)
 	goto mmap_unlock;
-    
+
+    /* Soar-supplied per-object weight overrides the per-core estimate when
+     * this address falls in a registered range; 0 means unregistered, keep
+     * the caller's fallback. */
+    {
+	unsigned long w = htmm_weight_lookup(mm, address);
+	if (w)
+	    aol_weight = w;
+    }
+
     /* increase sample counts only for valid records */
     ret = __update_pginfo(vma, address, aol_weight);
     if (ret == 1) { /* memory accesses to DRAM */

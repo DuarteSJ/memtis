@@ -1,4 +1,5 @@
 #include <uapi/linux/perf_event.h>
+#include <linux/interval_tree.h>
 
 #define DEFERRED_SPLIT_ISOLATED 1
 
@@ -18,19 +19,10 @@
 #define STLB_MISS_STORES    0x12d0
 #define STLB_MISS_LOADS	    0x11d0
 
-/* pmu counters
- * Raw encoding: cmask<<24 | umask<<8 | event. USR/OS/EN bits live in
- * attr.exclude_*, not in config — keep config to event/umask/cmask only.
- */
-#define N_HTMMCOUNTERS 4 /* A1, A3, s_LLC, c */
-#define CYCLE_ACTIVITY_STALLS_L3_MISS   0x060006a3 /* ev=0xA3, umask=0x06, cmask=6: LLC stall cycles */
-#define CPU_CLK_UNHALTED_THREAD         0x0000003c /* ev=0x3C, umask=0x00: thread cycles */
-#define ORO_CYCLES_WITH_DEMAND_DATA_RD  0x01000160 /* ev=0x60, umask=0x01, cmask=1: cycles w/ pending demand reads (A1) */
-#define ORO_DEMAND_DATA_RD              0x00000160 /* ev=0x60, umask=0x01: outstanding demand reads per cycle (A2, unused) */
-#define OFFCORE_REQUESTS_DEMAND_DATA_RD 0x000001b0 /* ev=0xB0, umask=0x01: # demand read requests (A3) */
-
 /* AOL-weighted hotness: fixed-point scale used for aol_weight and
- * weighted_accesses. Power of two so the descale in get_idx is a bit shift. */
+ * weighted_accesses. Power of two so the descale in get_idx is a bit shift.
+ * AOL_SCALE is the neutral weight (no reweighting); Soar weights are expressed
+ * in these units and override it per registered range. */
 #define AOL_SHIFT 10
 #define AOL_SCALE (1UL << AOL_SHIFT)
 
@@ -108,9 +100,18 @@ enum events {
     N_HTMMEVENTS
 };
 
-/* htmm_core.c */
-extern unsigned long get_current_aol_weight(int cpu);
-extern void update_aol_counters(int cpu, u64 a1, u64 a3, u64 s_llc, u64 c);
+/* htmm_ioctl.c -- Soar per-object weight handoff.
+ * One node per registered [start, last] virtual range, ordered in the
+ * per-mm interval tree (mm->htmm_weight_tree). */
+struct htmm_weight_node {
+    struct interval_tree_node it;   /* it.start, it.last (inclusive) */
+    unsigned long weight;           /* aol_weight, AOL_SCALE fixed point */
+};
+
+extern void htmm_weight_tree_init(struct mm_struct *mm);
+extern void htmm_weight_tree_free(struct mm_struct *mm);
+/* returns 0 if addr is not covered by any registered range */
+extern unsigned long htmm_weight_lookup(struct mm_struct *mm, unsigned long addr);
 
 extern void htmm_mm_init(struct mm_struct *mm);
 extern void htmm_mm_exit(struct mm_struct *mm);

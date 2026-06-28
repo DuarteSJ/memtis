@@ -14,13 +14,9 @@
 #include <linux/htmm.h>
 
 struct task_struct *access_sampling = NULL;
-/* mem_event[cpu][event] and aol_events[cpu][counter] are indexed by linear
- * CPU id and sized to nr_cpu_ids. Entries outside the htmm cpumask stay NULL. */
+/* mem_event[cpu][event] is indexed by linear CPU id and sized to nr_cpu_ids.
+ * Entries outside the htmm cpumask stay NULL. */
 struct perf_event ***mem_event;
-static struct perf_event ***aol_events; /* per cpu: {A1, A3, s_LLC, c} */
-/* Per CPU counters, so each core's delta is computed against its own last window.
- * Indexed [counter] as {A1, A3, s_LLC, c}. */
-static DEFINE_PER_CPU(u64[N_HTMMCOUNTERS], aols_last);
 
 static bool valid_va(unsigned long addr)
 {
@@ -97,113 +93,6 @@ static int __perf_event_open(__u64 config, __u64 config1, __u64 cpu,
     }
     mem_event[cpu][type] = fget(event_fd)->private_data;
     return 0;
-}
-
-static void aol_counters_release(void)
-{
-    int cpu, counter;
-
-    if (!aol_events)
-        return;
-    for (cpu = 0; cpu < nr_cpu_ids; cpu++) {
-        if (!aol_events[cpu])
-            continue;
-        for (counter = 0; counter < N_HTMMCOUNTERS; counter++) {
-            if (aol_events[cpu][counter]) {
-                perf_event_release_kernel(aol_events[cpu][counter]);
-                aol_events[cpu][counter] = NULL;
-            }
-        }
-        kfree(aol_events[cpu]);
-        aol_events[cpu] = NULL;
-    }
-    kfree(aol_events);
-    aol_events = NULL;
-}
-
-static int aol_counters_init(void)
-{
-    struct perf_event_attr attr;
-    u64 configs[N_HTMMCOUNTERS] = {
-        ORO_CYCLES_WITH_DEMAND_DATA_RD,  /* A1 */
-        OFFCORE_REQUESTS_DEMAND_DATA_RD, /* A3 */
-        CYCLE_ACTIVITY_STALLS_L3_MISS,   /* s_LLC */
-        CPU_CLK_UNHALTED_THREAD,         /* c */
-    };
-    int cpu, counter;
-
-    aol_events = kcalloc(nr_cpu_ids, sizeof(*aol_events), GFP_KERNEL);
-    if (!aol_events)
-        return -ENOMEM;
-
-    for_each_htmm_cpu(cpu) {
-        aol_events[cpu] = kcalloc(N_HTMMCOUNTERS, sizeof(**aol_events), GFP_KERNEL);
-        if (!aol_events[cpu]) {
-            aol_counters_release();
-            return -ENOMEM;
-        }
-        for (counter = 0; counter < N_HTMMCOUNTERS; counter++) {
-            struct perf_event *ev;
-
-            memset(&attr, 0, sizeof(struct perf_event_attr));
-            attr.type           = PERF_TYPE_RAW;
-            attr.size           = sizeof(attr);
-            attr.config         = configs[counter];
-            attr.exclude_kernel = 0;
-            attr.disabled       = 0;
-
-            ev = perf_event_create_kernel_counter(&attr, cpu, NULL, NULL, NULL);
-            if (IS_ERR(ev)) {
-                int err = PTR_ERR(ev);
-                pr_err("aol_counters_init: failed to create counter %d on cpu %d: %d\n",
-                       counter, cpu, err);
-                aol_events[cpu][counter] = NULL;
-                aol_counters_release();
-                return err;
-            }
-            aol_events[cpu][counter] = ev;
-        }
-    }
-    return 0;
-}
-
-static void aol_read_and_update(void)
-{
-    u64 en, ru;
-    int cpu, i;
-
-    if (!aol_events)
-        return;
-
-    for_each_htmm_cpu(cpu) {
-        u64 raw[N_HTMMCOUNTERS];
-        u64 *last = per_cpu(aols_last, cpu);
-        bool ok = true;
-
-        if (!aol_events[cpu])
-            continue;
-        for (i = 0; i < N_HTMMCOUNTERS; i++) {
-            if (!aol_events[cpu][i]) {
-                ok = false;
-                break;
-            }
-            raw[i] = perf_event_read_value(aol_events[cpu][i], &en, &ru);
-            /* counter was enabled but never actually ran in this window: result is untrustworthy */
-            if (en && !ru) {
-                printk_ratelimited("aol_read_and_update: counter %d on cpu %d not running (en=%llu ru=%llu); skipping cpu\n",
-                                   i, cpu, en, ru);
-                ok = false;
-                break;
-            }
-        }
-        if (!ok)
-            continue;
-
-        update_aol_counters(cpu, raw[0] - last[0], raw[1] - last[1],
-                            raw[2] - last[2], raw[3] - last[3]);
-        for (i = 0; i < N_HTMMCOUNTERS; i++)
-            last[i] = raw[i];
-    }
 }
 
 static int pebs_init(pid_t pid, int node)
@@ -318,8 +207,6 @@ static int ksamplingd(void *data)
     unsigned long cpucap_period = msecs_to_jiffies(15000); // 15s
     unsigned long sample_period = 0;
     unsigned long sample_inst_period = 0;
-    unsigned long aol_period = msecs_to_jiffies(1000); /* TODO: this has to be tunned. Currently 1s as per SOAR/ALTO paper */
-    unsigned long last_aol_update = jiffies;
     /* report cpu/period stat */
     unsigned long trace_cputime, trace_period = msecs_to_jiffies(1500); // 3s
     unsigned long trace_runtime;
@@ -408,9 +295,9 @@ static int ksamplingd(void *data)
 				break;
 			    }
 
-			    /* weight by the AOL of the core that took this sample */
-			    update_pginfo(he->pid, he->addr, event,
-					  get_current_aol_weight(cpu));
+			    /* neutral weight; Soar per-object weights (if any)
+			     * override per address inside update_pginfo */
+			    update_pginfo(he->pid, he->addr, event, AOL_SCALE);
 			    //count_vm_event(HTMM_NR_SAMPLED);
 			    nr_sampled++;
 
@@ -458,10 +345,6 @@ static int ksamplingd(void *data)
 
 	/* check elasped time */
 	cur = jiffies;
-    if ((cur - last_aol_update) >= aol_period) {
-        aol_read_and_update();
-        last_aol_update = cur;
-    }
 	if ((cur - elapsed_cputime) >= cpucap_period) {
 	    u64 cur_runtime = t->se.sum_exec_runtime;
 	    exec_runtime = cur_runtime - exec_runtime; //ns
@@ -554,13 +437,6 @@ int ksamplingd_init(pid_t pid, int node)
 	return 0;
     }
 
-    ret = aol_counters_init();
-    if (ret) {
-	pr_err("aol_counters_init failure... ERROR:%d\n", ret);
-	pebs_disable();
-	return ret;
-    }
-
     return ksamplingd_run();
 }
 
@@ -571,5 +447,4 @@ void ksamplingd_exit(void)
 	access_sampling = NULL;
     }
     pebs_disable();
-    aol_counters_release();
 }

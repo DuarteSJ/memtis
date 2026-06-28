@@ -3043,8 +3043,6 @@ unsigned int htmm_nowarm = 0; // enabled: 0, disabled: 1
 unsigned int htmm_util_weight = 10; // no impact (unused)
 unsigned int htmm_mode = 1;
 unsigned int htmm_gamma = 4; /* 0.4; divide this by 10 */
-unsigned int htmm_aol_param_a = 64;
-unsigned int htmm_aol_param_b = 1311;
 bool htmm_cxl_mode = false;
 bool htmm_skip_cooling = true;
 unsigned int htmm_thres_cooling_alloc = 256 * 1024 * 10; // unit: 4KiB, default: 10GB
@@ -3209,56 +3207,6 @@ static ssize_t htmm_thres_hot_store(struct kobject *kobj,
 static struct kobj_attribute htmm_thres_hot_attr =
 	__ATTR(htmm_thres_hot, 0644, htmm_thres_hot_show,
 	       htmm_thres_hot_store);
-
-static ssize_t htmm_aol_param_a_show(struct kobject *kobj,
-				   struct kobj_attribute *attr, char *buf)
-{
-	return sysfs_emit(buf, "%u\n", htmm_aol_param_a);
-}
-
-static ssize_t htmm_aol_param_a_store(struct kobject *kobj,
-				    struct kobj_attribute *attr,
-				    const char *buf, size_t count)
-{
-	int err;
-	unsigned int val;
-
-	err = kstrtouint(buf, 10, &val);
-	if (err)
-		return err;
-
-	WRITE_ONCE(htmm_aol_param_a, val);
-	return count;
-}
-
-static struct kobj_attribute htmm_aol_param_a_attr =
-	__ATTR(htmm_aol_param_a, 0644, htmm_aol_param_a_show,
-	       htmm_aol_param_a_store);
-
-static ssize_t htmm_aol_param_b_show(struct kobject *kobj,
-				   struct kobj_attribute *attr, char *buf)
-{
-	return sysfs_emit(buf, "%u\n", htmm_aol_param_b);
-}
-
-static ssize_t htmm_aol_param_b_store(struct kobject *kobj,
-				    struct kobj_attribute *attr,
-				    const char *buf, size_t count)
-{
-	int err;
-	unsigned int val;
-
-	err = kstrtouint(buf, 10, &val);
-	if (err)
-		return err;
-
-	WRITE_ONCE(htmm_aol_param_b, val);
-	return count;
-}
-
-static struct kobj_attribute htmm_aol_param_b_attr =
-	__ATTR(htmm_aol_param_b, 0644, htmm_aol_param_b_show,
-	       htmm_aol_param_b_store);
 
 static ssize_t htmm_cooling_period_show(struct kobject *kobj,
 				    struct kobj_attribute *attr, char *buf)
@@ -3663,8 +3611,6 @@ static struct attribute *htmm_attrs[] = {
 	&htmm_inst_sample_period_attr.attr,
 	&htmm_split_period_attr.attr,
 	&htmm_thres_hot_attr.attr,
-	&htmm_aol_param_a_attr.attr,
-	&htmm_aol_param_b_attr.attr,
 	&htmm_cooling_period_attr.attr,
 	&htmm_adaptation_period_attr.attr,
 	&ksampled_min_sample_ratio_attr.attr,
