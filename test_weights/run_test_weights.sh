@@ -3,16 +3,21 @@
 # run_test_weights.sh - prep the htmm cgroup + sampler, run the two-region
 # weight test, and watch which region MEMTIS promotes to the fast tier.
 #
-# Caps the fast (DRAM) node below the 2-region working set so MEMTIS must
-# choose. With a high -h weight, B (touched 1x) should beat A (touched 2x) and
-# win the fast tier - the whole point. Mirrors membench/scripts/managed_corun.sh.
+# Caps the fast node below the 2-region working set so MEMTIS must choose. With
+# a high --high weight, B (touched 1x) should beat A (touched 2x) and win the
+# fast tier. Mirrors membench/scripts/managed_corun.sh. Run as root.
 #
-# Must run on the htmm kernel, as root.
-#   sudo ./run_test_weights.sh [-d dram_mb] [-f fast_node] \
-#                              [-s region_mb] [-l low_w] [-h high_w] [-w watch_s]
+#   -d, --dram-mb <mb>    fast-node memory cap         (default 128)
+#   -f, --fast-node <n>   fast (DRAM) node             (default 0)
+#   -S, --slow-node <n>   slow-tier node               (default 2)
+#   -s, --size-mb <mb>    region size per workload     (test_weights default)
+#   -l, --low <w>         A's weight (low)             (test_weights default)
+#   -H, --high <w>        B's weight (high)            (test_weights default)
+#   -w, --watch <s>       placement poll interval, s   (default 5)
+#   -h, --help
 #
-#   control (vanilla):   sudo ./run_test_weights.sh -l 1024 -h 1024
-#   treatment (weights): sudo ./run_test_weights.sh -l 1024 -h 4096
+#   control (vanilla):   sudo ./run_test_weights.sh --low 1024 --high 1024
+#   treatment (weights): sudo ./run_test_weights.sh --low 1024 --high 4096
 #
 set -u
 
@@ -23,20 +28,33 @@ CG="$CG_DIR/htmm"
 
 DRAM_MB=128
 FAST_NODE=0
+SLOW_NODE=2
+REGION_MB=""         # unset -> test_weights default
+W_LOW=""
+W_HIGH=""
 WATCH=5
-FWD=()               # -s/-l/-h forwarded to test_weights
 
-while getopts "d:f:s:l:h:w:" o; do
-    case "$o" in
-        d) DRAM_MB="$OPTARG" ;;
-        f) FAST_NODE="$OPTARG" ;;
-        s) FWD+=(-s "$OPTARG") ;;
-        l) FWD+=(-l "$OPTARG") ;;
-        h) FWD+=(-h "$OPTARG") ;;
-        w) WATCH="$OPTARG" ;;
-        *) exit 2 ;;
+usage() { grep '^#' "$0" | grep -v '^#!' | sed 's/^#\s\?//'; exit "${1:-0}"; }
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d|--dram-mb)   DRAM_MB=$2;   shift 2 ;;
+        -f|--fast-node) FAST_NODE=$2; shift 2 ;;
+        -S|--slow-node) SLOW_NODE=$2; shift 2 ;;
+        -s|--size-mb)   REGION_MB=$2; shift 2 ;;
+        -l|--low)       W_LOW=$2;     shift 2 ;;
+        -H|--high)      W_HIGH=$2;    shift 2 ;;
+        -w|--watch)     WATCH=$2;     shift 2 ;;
+        -h|--help)      usage 0 ;;
+        *) echo "unknown arg: $1" >&2; usage 2 ;;
     esac
 done
+
+# forward the region/weight knobs to test_weights (its flags are -s/-l/-h)
+FWD=()
+[[ -n $REGION_MB ]] && FWD+=(-s "$REGION_MB")
+[[ -n $W_LOW     ]] && FWD+=(-l "$W_LOW")
+[[ -n $W_HIGH    ]] && FWD+=(-h "$W_HIGH")
 
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || { echo "run as root" >&2; exit 1; }
 [[ -x "$TEST" ]]     || { echo "build $TEST first: cc -O2 -o test_weights test_weights.c" >&2; exit 1; }
@@ -100,25 +118,24 @@ TPID=$!
 sleep 1
 cat "$OUT"
 
-# grab the 0x... field regardless of position, strip the 0x. (The printed line
-# is "A(2x,low) : 0x.. +..", so the address is not $2 - find the 0x field.)
+# grab the 0x... field regardless of position, strip the 0x
 addr_of() { awk -v t="$1" 'index($0,t)==1 {for(i=1;i<=NF;i++) if(substr($i,1,2)=="0x"){print substr($i,3); exit}}' "$OUT"; }
 A_ADDR=$(addr_of 'A(')
 B_ADDR=$(addr_of 'B(')
 
-# print "N<fast>=.. N1=.." page counts for the mmap starting at $1 (hex, no 0x)
+# page counts on fast + slow nodes for the mmap starting at $1 (hex, no 0x)
 region_stat() {
-    local line n0 n1
+    local line n0 ns
     line=$(grep "^$1 " "/proc/$TPID/numa_maps" 2>/dev/null)
     [[ -z "$line" ]] && { echo "no-line"; return; }
     n0=$(sed -n 's/.*N'"$FAST_NODE"'=\([0-9]*\).*/\1/p' <<<"$line")
-    n1=$(sed -n 's/.*N1=\([0-9]*\).*/\1/p' <<<"$line")
-    echo "N$FAST_NODE=${n0:-0} N1=${n1:-0}"
+    ns=$(sed -n 's/.*N'"$SLOW_NODE"'=\([0-9]*\).*/\1/p' <<<"$line")
+    echo "N$FAST_NODE=${n0:-0} N$SLOW_NODE=${ns:-0}"
 }
 
 echo
 echo "A base=$A_ADDR  B base=$B_ADDR"
-echo "watching pages every ${WATCH}s (N$FAST_NODE=fast, N1=slow); Ctrl-C to stop"
+echo "watching pages every ${WATCH}s (N$FAST_NODE=fast, N$SLOW_NODE=slow); Ctrl-C to stop"
 echo "expect B's N$FAST_NODE to climb above A's once cooling+migration settle"
 while kill -0 "$TPID" 2>/dev/null; do
     sleep "$WATCH"
