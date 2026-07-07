@@ -7,10 +7,10 @@
 # a high --high weight, B (touched 1x) should beat A (touched 2x) and win the
 # fast tier. Mirrors membench/scripts/managed_corun.sh. Run as root.
 #
-#   -d, --dram-mb <mb>    fast-node memory cap         (default 128)
+#   -d, --dram-mb <mb>    fast-node memory cap         (default = --size-mb)
 #   -f, --fast-node <n>   fast (DRAM) node             (default 0)
 #   -S, --slow-node <n>   slow-tier node               (default 2)
-#   -s, --size-mb <mb>    region size per workload     (test_weights default)
+#   -s, --size-mb <mb>    region size per workload     (default 128)
 #   -l, --low <w>         A's weight (low)             (test_weights default)
 #   -H, --high <w>        B's weight (high)            (test_weights default)
 #   -w, --watch <s>       placement poll interval, s   (default 5)
@@ -26,15 +26,16 @@ TEST="${TEST:-./test_weights}"
 CG_DIR=/sys/fs/cgroup
 CG="$CG_DIR/htmm"
 
-DRAM_MB=128
+DRAM_MB=""           # unset -> defaults to REGION_MB (fast tier fits one region)
 FAST_NODE=0
 SLOW_NODE=2
-REGION_MB=""         # unset -> test_weights default
+REGION_MB=128        # per-region size
 W_LOW=""
 W_HIGH=""
 WATCH=5
 
-usage() { grep '^#' "$0" | grep -v '^#!' | sed 's/^#\s\?//'; exit "${1:-0}"; }
+# print the leading comment block only (skip shebang, stop at first non-# line)
+usage() { awk 'NR>1 && /^#/{sub(/^#\s?/,"");print;next} NR>1{exit}' "$0"; exit "${1:-0}"; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,11 +51,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# DRAM cap defaults to one region, so exactly one of the two fits in fast tier
+[[ -z $DRAM_MB ]] && DRAM_MB=$REGION_MB
+
 # forward the region/weight knobs to test_weights (its flags are -s/-l/-h)
-FWD=()
-[[ -n $REGION_MB ]] && FWD+=(-s "$REGION_MB")
-[[ -n $W_LOW     ]] && FWD+=(-l "$W_LOW")
-[[ -n $W_HIGH    ]] && FWD+=(-h "$W_HIGH")
+FWD=(-s "$REGION_MB")
+[[ -n $W_LOW  ]] && FWD+=(-l "$W_LOW")
+[[ -n $W_HIGH ]] && FWD+=(-h "$W_HIGH")
 
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || { echo "run as root" >&2; exit 1; }
 [[ -x "$TEST" ]]     || { echo "build $TEST first: cc -O2 -o test_weights test_weights.c" >&2; exit 1; }
