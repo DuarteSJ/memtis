@@ -55,16 +55,14 @@ static void parse_args(int argc, char **argv, struct config *cfg)
 	}
 }
 
-static char *map_and_register(int fd, size_t len, uint64_t weight, const char *tag)
+static int register_region(int fd, char *p, size_t len, uint64_t weight,
+			   const char *tag)
 {
-	char *p = mmap(NULL, len, PROT_READ | PROT_WRITE,
-		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (p == MAP_FAILED) { perror("mmap"); return NULL; }
 	memset(p, 1, len);
 	struct htmm_weight_range r = { (uint64_t)(uintptr_t)p, len, weight };
-	if (ioctl(fd, HTMM_IOC_REGISTER, &r) < 0) { perror("ioctl"); return NULL; }
+	if (ioctl(fd, HTMM_IOC_REGISTER, &r) < 0) { perror("ioctl"); return -1; }
 	printf("%s: %p +%zuMB weight=%lu\n", tag, p, len >> 20, (unsigned long)weight);
-	return p;
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -72,17 +70,24 @@ int main(int argc, char **argv)
 	struct config cfg;
 	parse_args(argc, argv, &cfg);
 	size_t len = cfg.region_mb << 20;
+	size_t gap = 4096;
 
 	int fd = open("/dev/memtis", O_RDWR);
 	if (fd < 0) { perror("open"); return 1; }
 
-	char *A = map_and_register(fd, len, cfg.w_low,  "A(2x,low) ");
-	/* guard page between A and B: adjacent same-flag anon VMAs get merged into
-	 * one, collapsing them to a single numa_maps line. A different-prot VMA in
-	 * between blocks the merge so each region stays its own line. */
-	mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	char *B = map_and_register(fd, len, cfg.w_high, "B(1x,high)");
-	if (!A || !B) return 1;
+	/* One mmap covering A | guard | B, then mprotect the middle page to
+	 * PROT_NONE. That forces a VMA split so A and B are separate VMAs (distinct
+	 * numa_maps lines) with a deterministic gap - adjacent same-flag anon VMAs
+	 * would otherwise merge into a single line. */
+	char *base = mmap(NULL, 2 * len + gap, PROT_READ | PROT_WRITE,
+			  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (base == MAP_FAILED) { perror("mmap"); return 1; }
+	char *A = base;
+	char *B = base + len + gap;
+	if (mprotect(base + len, gap, PROT_NONE) < 0) { perror("mprotect"); return 1; }
+
+	if (register_region(fd, A, len, cfg.w_low,  "A(2x,low) ")) return 1;
+	if (register_region(fd, B, len, cfg.w_high, "B(1x,high)")) return 1;
 	printf("pid=%d hammering (A 2x, B 1x)...\n", getpid());
 	fflush(stdout);   /* stdout is fully buffered when redirected to a file;
 			   * flush now or the loop below never lets it out */
