@@ -107,9 +107,7 @@ fi
 echo $(( DRAM_MB * 1024 * 1024 )) > "$CG/memory.max_at_node${FAST_NODE}"
 echo enabled > "$CG/memory.htmm_enabled"
 
-echo "== two-region weight test =="
-echo "DRAM cap node$FAST_NODE: ${DRAM_MB}MB    args: ${FWD[*]:-defaults}"
-echo
+echo "DRAM cap node$FAST_NODE: ${DRAM_MB}MB    args: ${FWD[*]}"
 
 echo $$ > "$CG/cgroup.procs"                 # shell in cgroup; child inherits
 "$HTMM_CTL" start || { echo "htmm_ctl start failed" >&2; exit 1; }
@@ -141,10 +139,6 @@ region_stat() {
     echo "N$FAST_NODE=${n0:-0} N$SLOW_NODE=${ns:-0}"
 }
 
-echo
-echo "A base=$A_ADDR  B base=$B_ADDR"
-echo "watching pages every ${WATCH}s (N$FAST_NODE=fast, N$SLOW_NODE=slow); Ctrl-C to stop"
-echo "expect B's N$FAST_NODE to climb above A's once cooling+migration settle"
 while kill -0 "$TPID" 2>/dev/null; do
     sleep "$WATCH"
     printf "  A(2x,low)  %s      B(1x,high)  %s\n" \
