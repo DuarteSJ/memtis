@@ -77,6 +77,10 @@ int main(int argc, char **argv)
 	if (fd < 0) { perror("open"); return 1; }
 
 	char *A = map_and_register(fd, len, cfg.w_low,  "A(2x,low) ");
+	/* guard page between A and B: adjacent same-flag anon VMAs get merged into
+	 * one, collapsing them to a single numa_maps line. A different-prot VMA in
+	 * between blocks the merge so each region stays its own line. */
+	mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	char *B = map_and_register(fd, len, cfg.w_high, "B(1x,high)");
 	if (!A || !B) return 1;
 	printf("pid=%d hammering (A 2x, B 1x)...\n", getpid());
