@@ -55,13 +55,11 @@ static void parse_args(int argc, char **argv, struct config *cfg)
 	}
 }
 
-static int register_region(int fd, char *p, size_t len, uint64_t weight,
-			   const char *tag)
+static int register_region(int fd, char *p, size_t len, uint64_t weight)
 {
-	memset(p, 1, len);
+	memset(p, 1, len);   /* fault the pages in (slow for big regions) */
 	struct htmm_weight_range r = { (uint64_t)(uintptr_t)p, len, weight };
 	if (ioctl(fd, HTMM_IOC_REGISTER, &r) < 0) { perror("ioctl"); return -1; }
-	printf("%s: %p +%zuMB weight=%lu\n", tag, p, len >> 20, (unsigned long)weight);
 	return 0;
 }
 
@@ -71,6 +69,10 @@ int main(int argc, char **argv)
 	parse_args(argc, argv, &cfg);
 	size_t len = cfg.region_mb << 20;
 	size_t gap = 4096;
+
+	/* line-buffered so the address lines below reach a redirected stdout
+	 * immediately, before the slow memsets - the watcher parses them. */
+	setvbuf(stdout, NULL, _IOLBF, 0);
 
 	int fd = open("/dev/memtis", O_RDWR);
 	if (fd < 0) { perror("open"); return 1; }
@@ -86,11 +88,14 @@ int main(int argc, char **argv)
 	char *B = base + len + gap;
 	if (mprotect(base + len, gap, PROT_NONE) < 0) { perror("mprotect"); return 1; }
 
-	if (register_region(fd, A, len, cfg.w_low,  "A(2x,low) ")) return 1;
-	if (register_region(fd, B, len, cfg.w_high, "B(1x,high)")) return 1;
+	/* print the layout up front (before faulting) so the watcher has the
+	 * addresses even while the memsets below are still running */
+	printf("A(2x,low) : %p +%zuMB weight=%lu\n", (void *)A, len >> 20, (unsigned long)cfg.w_low);
+	printf("B(1x,high): %p +%zuMB weight=%lu\n", (void *)B, len >> 20, (unsigned long)cfg.w_high);
 	printf("pid=%d hammering (A 2x, B 1x)...\n", getpid());
-	fflush(stdout);   /* stdout is fully buffered when redirected to a file;
-			   * flush now or the loop below never lets it out */
+
+	if (register_region(fd, A, len, cfg.w_low))  return 1;
+	if (register_region(fd, B, len, cfg.w_high)) return 1;
 
 	for (;;) {
 		for (int pass = 0; pass < 2; pass++)      /* A: twice */

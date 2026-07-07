@@ -118,13 +118,18 @@ echo $$ > "$CG/cgroup.procs"                 # shell in cgroup; child inherits
 OUT="$(mktemp)"
 "$TEST" "${FWD[@]}" > "$OUT" 2>&1 &
 TPID=$!
-sleep 1
-cat "$OUT"
 
 # grab the 0x... field regardless of position, strip the 0x
 addr_of() { awk -v t="$1" 'index($0,t)==1 {for(i=1;i<=NF;i++) if(substr($i,1,2)=="0x"){print substr($i,3); exit}}' "$OUT"; }
-A_ADDR=$(addr_of 'A(')
-B_ADDR=$(addr_of 'B(')
+
+# wait (up to ~15s) for the address lines - big regions take a while to mmap
+for _ in $(seq 30); do
+    A_ADDR=$(addr_of 'A('); B_ADDR=$(addr_of 'B(')
+    [[ -n $A_ADDR && -n $B_ADDR ]] && break
+    kill -0 "$TPID" 2>/dev/null || { echo "test_weights exited early:" >&2; cat "$OUT" >&2; exit 1; }
+    sleep 0.5
+done
+cat "$OUT"
 
 # page counts on fast + slow nodes for the mmap starting at $1 (hex, no 0x)
 region_stat() {
