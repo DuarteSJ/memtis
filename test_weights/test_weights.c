@@ -80,6 +80,8 @@ int main(int argc, char **argv)
 	char *B = map_and_register(fd, len, cfg.w_high, "B(1x,high)");
 	if (!A || !B) return 1;
 	printf("pid=%d hammering (A 2x, B 1x)...\n", getpid());
+	fflush(stdout);   /* stdout is fully buffered when redirected to a file;
+			   * flush now or the loop below never lets it out */
 
 	for (;;) {
 		for (int pass = 0; pass < 2; pass++)      /* A: twice */

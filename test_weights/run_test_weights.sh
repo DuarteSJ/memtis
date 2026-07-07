@@ -102,9 +102,9 @@ cat "$OUT"
 
 # grab the 0x... field regardless of position, strip the 0x. (The printed line
 # is "A(2x,low) : 0x.. +..", so the address is not $2 - find the 0x field.)
-addr_of() { awk -v t="$1" '$0 ~ "^"t {for(i=1;i<=NF;i++) if($i ~ /^0x/){print substr($i,3); exit}}' "$OUT"; }
-A_ADDR=$(addr_of 'A\(')
-B_ADDR=$(addr_of 'B\(')
+addr_of() { awk -v t="$1" 'index($0,t)==1 {for(i=1;i<=NF;i++) if(substr($i,1,2)=="0x"){print substr($i,3); exit}}' "$OUT"; }
+A_ADDR=$(addr_of 'A(')
+B_ADDR=$(addr_of 'B(')
 
 # print "N<fast>=.. N1=.." page counts for the mmap starting at $1 (hex, no 0x)
 region_stat() {
