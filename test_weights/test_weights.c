@@ -5,8 +5,8 @@
  *
  * Flags (weights are MULTIPLES of neutral; scaled by AOL_SCALE internally):
  *   -s <mb>   region size, MB      (default 128)
- *   -l <n>    A's weight, xneutral (default 1 = neutral)
- *   -h <n>    B's weight, xneutral (default 4)
+ *   -l <n>    A's weight, xneutral, fractional ok (default 1 = neutral)
+ *   -h <n>    B's weight, xneutral, fractional ok (default 4)
  *   With -h > 2*-l, B outranks A despite half the accesses.
  *   -l 1 -h 1 -> vanilla (A wins).
  *
@@ -45,9 +45,9 @@ static void parse_args(int argc, char **argv, struct config *cfg)
 
 	while ((opt = getopt(argc, argv, "s:l:h:")) != -1) {
 		switch (opt) {
-		case 's': cfg->region_len = strtoul(optarg, NULL, 0) << 20;        break;
-		case 'l': cfg->w_low      = strtoull(optarg, NULL, 0) * AOL_SCALE; break;
-		case 'h': cfg->w_high     = strtoull(optarg, NULL, 0) * AOL_SCALE; break;
+		case 's': cfg->region_len = strtoul(optarg, NULL, 0) << 20;           break;
+		case 'l': cfg->w_low      = (uint64_t)(strtod(optarg, NULL) * AOL_SCALE); break;
+		case 'h': cfg->w_high     = (uint64_t)(strtod(optarg, NULL) * AOL_SCALE); break;
 		default:
 			fprintf(stderr, "usage: %s [-s mb] [-l low_mult] [-h high_mult]\n",
 				argv[0]);
@@ -90,10 +90,10 @@ int main(int argc, char **argv)
 
 	/* print the layout up front (before faulting) so the watcher has the
 	 * addresses even while the memsets below are still running */
-	printf("A(2x,low) : %p +%zuMB weight=%lux (=%lu)\n", (void *)A, cfg.region_len >> 20,
-	       (unsigned long)(cfg.w_low / AOL_SCALE),  (unsigned long)cfg.w_low);
-	printf("B(1x,high): %p +%zuMB weight=%lux (=%lu)\n", (void *)B, cfg.region_len >> 20,
-	       (unsigned long)(cfg.w_high / AOL_SCALE), (unsigned long)cfg.w_high);
+	printf("A(2x,low) : %p +%zuMB weight=%gx (=%lu)\n", (void *)A, cfg.region_len >> 20,
+	       (double)cfg.w_low / AOL_SCALE,  (unsigned long)cfg.w_low);
+	printf("B(1x,high): %p +%zuMB weight=%gx (=%lu)\n", (void *)B, cfg.region_len >> 20,
+	       (double)cfg.w_high / AOL_SCALE, (unsigned long)cfg.w_high);
 	printf("pid=%d hammering (A 2x, B 1x)...\n", getpid());
 
 	if (register_region(fd, A, cfg.region_len, cfg.w_low))  return 1;
