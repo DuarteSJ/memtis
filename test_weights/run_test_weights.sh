@@ -100,21 +100,28 @@ TPID=$!
 sleep 1
 cat "$OUT"
 
-A_ADDR=$(awk '/^A\(/{print $2}' "$OUT" | sed 's/^0x//')
-B_ADDR=$(awk '/^B\(/{print $2}' "$OUT" | sed 's/^0x//')
+# grab the 0x... field regardless of position, strip the 0x. (The printed line
+# is "A(2x,low) : 0x.. +..", so the address is not $2 - find the 0x field.)
+addr_of() { awk -v t="$1" '$0 ~ "^"t {for(i=1;i<=NF;i++) if($i ~ /^0x/){print substr($i,3); exit}}' "$OUT"; }
+A_ADDR=$(addr_of 'A\(')
+B_ADDR=$(addr_of 'B\(')
 
-fast_pages() {   # $1=addr-nohex ; prints N<FAST_NODE> page count for that mmap
-    local line
+# print "N<fast>=.. N1=.." page counts for the mmap starting at $1 (hex, no 0x)
+region_stat() {
+    local line n0 n1
     line=$(grep "^$1 " "/proc/$TPID/numa_maps" 2>/dev/null)
-    sed -n 's/.*N'"$FAST_NODE"'=\([0-9]*\).*/\1/p' <<<"$line"
+    [[ -z "$line" ]] && { echo "no-line"; return; }
+    n0=$(sed -n 's/.*N'"$FAST_NODE"'=\([0-9]*\).*/\1/p' <<<"$line")
+    n1=$(sed -n 's/.*N1=\([0-9]*\).*/\1/p' <<<"$line")
+    echo "N$FAST_NODE=${n0:-0} N1=${n1:-0}"
 }
 
 echo
-echo "watching fast-tier (node $FAST_NODE) page counts every ${WATCH}s; Ctrl-C to stop"
-echo "expect B (high weight) to climb above A once cooling+migration settle"
+echo "A base=$A_ADDR  B base=$B_ADDR"
+echo "watching pages every ${WATCH}s (N$FAST_NODE=fast, N1=slow); Ctrl-C to stop"
+echo "expect B's N$FAST_NODE to climb above A's once cooling+migration settle"
 while kill -0 "$TPID" 2>/dev/null; do
     sleep "$WATCH"
-    a=$(fast_pages "$A_ADDR"); b=$(fast_pages "$B_ADDR")
-    printf "  A(2x,low) fastN%s=%-8s   B(1x,high) fastN%s=%-8s\n" \
-        "$FAST_NODE" "${a:-0}" "$FAST_NODE" "${b:-0}"
+    printf "  A(2x,low)  %s      B(1x,high)  %s\n" \
+        "$(region_stat "$A_ADDR")" "$(region_stat "$B_ADDR")"
 done
