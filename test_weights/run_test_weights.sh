@@ -11,8 +11,8 @@
 #   -f, --fast-node <n>   fast (DRAM) node             (default 0)
 #   -S, --slow-node <n>   slow-tier node               (default 2)
 #   -s, --size-mb <mb>    region size per workload     (default 128)
-#   -l, --low <w>         A's weight (low)             (test_weights default)
-#   -H, --high <w>        B's weight (high)            (test_weights default)
+#   -l, --low <n>         A's weight, xneutral         (default 1)
+#   -H, --high <n>        B's weight, xneutral         (default 4)
 #   -w, --watch <s>       placement poll interval, s   (default 5)
 #   -h, --help
 #

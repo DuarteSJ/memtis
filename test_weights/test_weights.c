@@ -3,12 +3,12 @@
  *   A: touched 2x
  *   B: touched 1x
  *
- * Flags:
+ * Flags (weights are MULTIPLES of neutral; scaled by AOL_SCALE internally):
  *   -s <mb>   region size, MB      (default 128)
- *   -l <w>    A's weight  (low)    (default 1024 = neutral)
- *   -h <w>    B's weight  (high)   (default 4096)
+ *   -l <n>    A's weight, xneutral (default 1 = neutral)
+ *   -h <n>    B's weight, xneutral (default 4)
  *   With -h > 2*-l, B outranks A despite half the accesses.
- *   -l 1024 -h 1024 -> vanilla (A wins).
+ *   -l 1 -h 1 -> vanilla (A wins).
  *
  * Run inside the htmm cgroup after 'htmm_ctl start'.
  * Build: cc -O2 -o test_weights test_weights.c
@@ -27,10 +27,11 @@ struct htmm_weight_range {
 };
 
 #define HTMM_IOC_REGISTER _IOW('H', 1, struct htmm_weight_range)
+#define AOL_SCALE 1024UL   /* neutral weight; must match kernel */
 
 struct config {
-	size_t   region_mb;
-	uint64_t w_low;
+	size_t   region_len;   /* bytes */
+	uint64_t w_low;        /* fixed-point weight (AOL_SCALE units) */
 	uint64_t w_high;
 };
 
@@ -38,17 +39,17 @@ static void parse_args(int argc, char **argv, struct config *cfg)
 {
 	int opt;
 
-	cfg->region_mb = 128;
-	cfg->w_low     = 1024;
-	cfg->w_high    = 4096;
+	cfg->region_len = 128UL << 20;
+	cfg->w_low      = 1 * AOL_SCALE;
+	cfg->w_high     = 4 * AOL_SCALE;
 
 	while ((opt = getopt(argc, argv, "s:l:h:")) != -1) {
 		switch (opt) {
-		case 's': cfg->region_mb = strtoul(optarg, NULL, 0);  break;
-		case 'l': cfg->w_low     = strtoull(optarg, NULL, 0); break;
-		case 'h': cfg->w_high    = strtoull(optarg, NULL, 0); break;
+		case 's': cfg->region_len = strtoul(optarg, NULL, 0) << 20;        break;
+		case 'l': cfg->w_low      = strtoull(optarg, NULL, 0) * AOL_SCALE; break;
+		case 'h': cfg->w_high     = strtoull(optarg, NULL, 0) * AOL_SCALE; break;
 		default:
-			fprintf(stderr, "usage: %s [-s mb] [-l low_weight] [-h high_weight]\n",
+			fprintf(stderr, "usage: %s [-s mb] [-l low_mult] [-h high_mult]\n",
 				argv[0]);
 			exit(1);
 		}
@@ -67,7 +68,6 @@ int main(int argc, char **argv)
 {
 	struct config cfg;
 	parse_args(argc, argv, &cfg);
-	size_t len = cfg.region_mb << 20;
 	size_t gap = 4096;
 
 	/* line-buffered so the address lines below reach a redirected stdout
@@ -81,27 +81,29 @@ int main(int argc, char **argv)
 	 * PROT_NONE. That forces a VMA split so A and B are separate VMAs (distinct
 	 * numa_maps lines) with a deterministic gap - adjacent same-flag anon VMAs
 	 * would otherwise merge into a single line. */
-	char *base = mmap(NULL, 2 * len + gap, PROT_READ | PROT_WRITE,
+	char *base = mmap(NULL, 2 * cfg.region_len + gap, PROT_READ | PROT_WRITE,
 			  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (base == MAP_FAILED) { perror("mmap"); return 1; }
 	char *A = base;
-	char *B = base + len + gap;
-	if (mprotect(base + len, gap, PROT_NONE) < 0) { perror("mprotect"); return 1; }
+	char *B = base + cfg.region_len + gap;
+	if (mprotect(base + cfg.region_len, gap, PROT_NONE) < 0) { perror("mprotect"); return 1; }
 
 	/* print the layout up front (before faulting) so the watcher has the
 	 * addresses even while the memsets below are still running */
-	printf("A(2x,low) : %p +%zuMB weight=%lu\n", (void *)A, len >> 20, (unsigned long)cfg.w_low);
-	printf("B(1x,high): %p +%zuMB weight=%lu\n", (void *)B, len >> 20, (unsigned long)cfg.w_high);
+	printf("A(2x,low) : %p +%zuMB weight=%lux (=%lu)\n", (void *)A, cfg.region_len >> 20,
+	       (unsigned long)(cfg.w_low / AOL_SCALE),  (unsigned long)cfg.w_low);
+	printf("B(1x,high): %p +%zuMB weight=%lux (=%lu)\n", (void *)B, cfg.region_len >> 20,
+	       (unsigned long)(cfg.w_high / AOL_SCALE), (unsigned long)cfg.w_high);
 	printf("pid=%d hammering (A 2x, B 1x)...\n", getpid());
 
-	if (register_region(fd, A, len, cfg.w_low))  return 1;
-	if (register_region(fd, B, len, cfg.w_high)) return 1;
+	if (register_region(fd, A, cfg.region_len, cfg.w_low))  return 1;
+	if (register_region(fd, B, cfg.region_len, cfg.w_high)) return 1;
 
 	for (;;) {
 		for (int pass = 0; pass < 2; pass++)      /* A: twice */
-			for (size_t i = 0; i < len; i += 64)
+			for (size_t i = 0; i < cfg.region_len; i += 64)
 				A[i]++;
-		for (size_t i = 0; i < len; i += 64)      /* B: once */
+		for (size_t i = 0; i < cfg.region_len; i += 64)      /* B: once */
 			B[i]++;
 	}
 }
