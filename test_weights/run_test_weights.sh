@@ -74,7 +74,7 @@ htmm_setting() {
     echo "${HTMM_MODE:-2}"                     > /sys/kernel/mm/htmm/htmm_mode
     echo "${HTMM_DEMOTION_PERIOD_IN_MS:-500}"  > /sys/kernel/mm/htmm/htmm_demotion_period_in_ms
     echo "${HTMM_PROMOTION_PERIOD_IN_MS:-500}" > /sys/kernel/mm/htmm/htmm_promotion_period_in_ms
-    echo "${HTMM_GAMMA:-4}"                     > /sys/kernel/mm/htmm/htmm_gamma
+    echo "${HTMM_GAMMA:-4}"                    > /sys/kernel/mm/htmm/htmm_gamma
     echo "${KSAMPLED_SOFT_CPU_QUOTA:-30}"      > /sys/kernel/mm/htmm/ksampled_soft_cpu_quota
     echo "${HTMM_THRES_SPLIT:-1}"              > /sys/kernel/mm/htmm/htmm_thres_split
     echo "${HTMM_NOWARM:-0}"                   > /sys/kernel/mm/htmm/htmm_nowarm
