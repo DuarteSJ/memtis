@@ -65,23 +65,23 @@ FWD=(-s "$REGION_MB")
 [[ -d /sys/kernel/mm/htmm ]] || { echo "not on the htmm kernel" >&2; exit 1; }
 
 htmm_setting() {
-    echo 199     > /sys/kernel/mm/htmm/htmm_sample_period
-    echo 100007  > /sys/kernel/mm/htmm/htmm_inst_sample_period
-    echo 1       > /sys/kernel/mm/htmm/htmm_thres_hot
-    echo 2       > /sys/kernel/mm/htmm/htmm_split_period
-    echo 100000  > /sys/kernel/mm/htmm/htmm_adaptation_period
-    echo 2000000 > /sys/kernel/mm/htmm/htmm_cooling_period
-    echo 2       > /sys/kernel/mm/htmm/htmm_mode
-    echo 500     > /sys/kernel/mm/htmm/htmm_demotion_period_in_ms
-    echo 500     > /sys/kernel/mm/htmm/htmm_promotion_period_in_ms
-    echo 4       > /sys/kernel/mm/htmm/htmm_gamma
-    echo 30      > /sys/kernel/mm/htmm/ksampled_soft_cpu_quota
-    echo 1       > /sys/kernel/mm/htmm/htmm_thres_split
-    echo 0       > /sys/kernel/mm/htmm/htmm_nowarm
-    echo disabled > /sys/kernel/mm/htmm/htmm_cxl_mode
-    echo always  > /sys/kernel/mm/transparent_hugepage/enabled
-    echo always  > /sys/kernel/mm/transparent_hugepage/defrag
-    echo 0       > /proc/sys/kernel/numa_balancing
+    echo "${HTMM_SAMPLE_PERIOD:-199}"          > /sys/kernel/mm/htmm/htmm_sample_period
+    echo "${HTMM_INST_SAMPLE_PERIOD:-100007}"  > /sys/kernel/mm/htmm/htmm_inst_sample_period
+    echo "${HTMM_THRES_HOT:-1}"                > /sys/kernel/mm/htmm/htmm_thres_hot
+    echo "${HTMM_SPLIT_PERIOD:-2}"             > /sys/kernel/mm/htmm/htmm_split_period
+    echo "${HTMM_ADAPTATION_PERIOD:-100000}"   > /sys/kernel/mm/htmm/htmm_adaptation_period
+    echo "${HTMM_COOLING_PERIOD:-2000000}"     > /sys/kernel/mm/htmm/htmm_cooling_period
+    echo "${HTMM_MODE:-2}"                     > /sys/kernel/mm/htmm/htmm_mode
+    echo "${HTMM_DEMOTION_PERIOD_IN_MS:-500}"  > /sys/kernel/mm/htmm/htmm_demotion_period_in_ms
+    echo "${HTMM_PROMOTION_PERIOD_IN_MS:-500}" > /sys/kernel/mm/htmm/htmm_promotion_period_in_ms
+    echo "${HTMM_GAMMA:-4}"                     > /sys/kernel/mm/htmm/htmm_gamma
+    echo "${KSAMPLED_SOFT_CPU_QUOTA:-30}"      > /sys/kernel/mm/htmm/ksampled_soft_cpu_quota
+    echo "${HTMM_THRES_SPLIT:-1}"              > /sys/kernel/mm/htmm/htmm_thres_split
+    echo "${HTMM_NOWARM:-0}"                   > /sys/kernel/mm/htmm/htmm_nowarm
+    echo "${HTMM_CXL_MODE:-disabled}"          > /sys/kernel/mm/htmm/htmm_cxl_mode
+    echo "${THP_ENABLED:-always}"              > /sys/kernel/mm/transparent_hugepage/enabled
+    echo "${THP_DEFRAG:-always}"               > /sys/kernel/mm/transparent_hugepage/defrag
+    echo "${NUMA_BALANCING:-0}"                > /proc/sys/kernel/numa_balancing
 }
 
 cleanup() {
