@@ -33,6 +33,7 @@ struct config {
 	size_t   region_len;   /* bytes */
 	uint64_t w_low;        /* fixed-point weight (AOL_SCALE units) */
 	uint64_t w_high;
+	int      b_first;      /* 1 = allocate/fault B before A (first-touch order) */
 };
 
 static void parse_args(int argc, char **argv, struct config *cfg)
@@ -42,14 +43,16 @@ static void parse_args(int argc, char **argv, struct config *cfg)
 	cfg->region_len = 128UL << 20;
 	cfg->w_low      = 1 * AOL_SCALE;
 	cfg->w_high     = 4 * AOL_SCALE;
+	cfg->b_first    = 0;
 
-	while ((opt = getopt(argc, argv, "s:l:h:")) != -1) {
+	while ((opt = getopt(argc, argv, "s:l:h:o:")) != -1) {
 		switch (opt) {
 		case 's': cfg->region_len = strtoul(optarg, NULL, 0) << 20;           break;
 		case 'l': cfg->w_low      = (uint64_t)(strtod(optarg, NULL) * AOL_SCALE); break;
 		case 'h': cfg->w_high     = (uint64_t)(strtod(optarg, NULL) * AOL_SCALE); break;
+		case 'o': cfg->b_first    = (optarg[0] == 'B' || optarg[0] == 'b');   break;
 		default:
-			fprintf(stderr, "usage: %s [-s mb] [-l low_mult] [-h high_mult]\n",
+			fprintf(stderr, "usage: %s [-s mb] [-l low_mult] [-h high_mult] [-o A|B]\n",
 				argv[0]);
 			exit(1);
 		}
@@ -96,8 +99,14 @@ int main(int argc, char **argv)
 	       (double)cfg.w_high / AOL_SCALE, (unsigned long)cfg.w_high);
 	printf("pid=%d hammering (A 2x, B 1x)...\n", getpid());
 
-	if (register_region(fd, A, cfg.region_len, cfg.w_low))  return 1;
-	if (register_region(fd, B, cfg.region_len, cfg.w_high)) return 1;
+	/* memset order = first-touch order, which decides the fast tier on a tie */
+	if (cfg.b_first) {
+		if (register_region(fd, B, cfg.region_len, cfg.w_high)) return 1;
+		if (register_region(fd, A, cfg.region_len, cfg.w_low))  return 1;
+	} else {
+		if (register_region(fd, A, cfg.region_len, cfg.w_low))  return 1;
+		if (register_region(fd, B, cfg.region_len, cfg.w_high)) return 1;
+	}
 
 	for (;;) {
 		for (int pass = 0; pass < 2; pass++)      /* A: twice */

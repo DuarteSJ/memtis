@@ -13,6 +13,7 @@
 #   -s, --size-mb <mb>    region size per workload     (default 128)
 #   -l, --low <n>         A's weight, xneutral         (default 1)
 #   -H, --high <n>        B's weight, xneutral         (default 4)
+#   -o, --order <A|B>     region faulted first         (default A)
 #   -w, --watch <s>       placement poll interval, s   (default 5)
 #   -h, --help
 #
@@ -32,6 +33,7 @@ SLOW_NODE=2
 REGION_MB=128        # per-region size
 W_LOW=""
 W_HIGH=""
+ORDER=""             # A|B: which region is faulted first (first-touch)
 WATCH=5
 
 # print the leading comment block only (skip shebang, stop at first non-# line)
@@ -45,6 +47,7 @@ while [[ $# -gt 0 ]]; do
         -s|--size-mb)   REGION_MB=$2; shift 2 ;;
         -l|--low)       W_LOW=$2;     shift 2 ;;
         -H|--high)      W_HIGH=$2;    shift 2 ;;
+        -o|--order)     ORDER=$2;     shift 2 ;;
         -w|--watch)     WATCH=$2;     shift 2 ;;
         -h|--help)      usage 0 ;;
         *) echo "unknown arg: $1" >&2; usage 2 ;;
@@ -58,6 +61,7 @@ done
 FWD=(-s "$REGION_MB")
 [[ -n $W_LOW  ]] && FWD+=(-l "$W_LOW")
 [[ -n $W_HIGH ]] && FWD+=(-h "$W_HIGH")
+[[ -n $ORDER  ]] && FWD+=(-o "$ORDER")
 
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || { echo "run as root" >&2; exit 1; }
 [[ -x "$TEST" ]]     || { echo "build $TEST first: cc -O2 -o test_weights test_weights.c" >&2; exit 1; }
