@@ -223,6 +223,9 @@ static bool promotion_available(int target_nid, struct mem_cgroup *memcg,
 	*nr_to_promote = node_free_pages(pgdat);
 	return true;
     }
+    /* Avoid underflow if dram cap is smaller than watermark. */
+    if (max_nr_pages <= fasttier_max_watermark)
+	return false;
     else if (cur_nr_pages + nr_isolated < max_nr_pages - fasttier_max_watermark) {
 	*nr_to_promote = max_nr_pages - fasttier_max_watermark - cur_nr_pages - nr_isolated;
 	return true;
